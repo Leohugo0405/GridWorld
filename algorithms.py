@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Tuple, Dict, List, Optional, Set
-import heapq, itertools
+import heapq, itertools, random
 from dataclasses import dataclass, field
 
 from grid import GridWorld, Coord
@@ -79,6 +79,7 @@ class TrajectoryResult:
     path: List[Coord]
     total_reward: int
 
+
 def total_reward_for_path(gw: GridWorld, path: List[Coord]) -> int:
     if not path: return -10**9
     # step -1; stepping into trap -10; stepping into gold +10 (once); reaching G +20
@@ -147,6 +148,144 @@ def best_collect_all_golds_then_exit(gw: GridWorld, max_perm: int = 7) -> Trajec
         best_score = total_reward_for_path(gw, best_path)
 
     return TrajectoryResult(best_path, best_score)
+
+# ------------------ Demon escape via minimax ------------------
+@dataclass
+class MinimaxEscapeResult:
+    agent_path: List[Coord]
+    demon_path: List[Coord]
+    success: bool
+    demon_start: Optional[Coord]
+    caught_step: Optional[int]
+    score: int
+
+
+def minimax_escape(
+    gw: GridWorld,
+    depth: int = 6,
+    max_steps: int = 80,
+    demon_start: Optional[Coord] = None,
+    seed: Optional[int] = None,
+) -> MinimaxEscapeResult:
+    """Simulate an escape attempt using minimax planning against a roaming demon."""
+
+    depth = max(1, depth)
+    rng = random.Random(seed)
+    start_agent = gw.start
+    start_goal = gw.goal
+    demon_pos = demon_start if demon_start is not None else gw.demon
+    if demon_pos is None:
+        demon_pos = gw.randomize_demon(rng)
+
+    agent_pos = start_agent
+    agent_path: List[Coord] = [agent_pos]
+    demon_path: List[Coord] = [demon_pos] if demon_pos is not None else []
+    opening_score: Optional[int] = None
+    caught_step: Optional[int] = None
+
+    WIN_SCORE = 1000
+    LOSE_SCORE = -1000
+
+    def heuristic(a: Coord, d: Optional[Coord]) -> int:
+        dist_goal = manhattan(a, start_goal)
+        dist_demon = manhattan(a, d) if d is not None else gw.w + gw.h
+        return -10 * dist_goal + 3 * dist_demon
+
+    def minimax(agent: Coord, demon: Coord, remaining: int, maximizing: bool, alpha: float, beta: float, memo: Dict[Tuple[Coord, Coord, int, bool], int]) -> int:
+        key = (agent, demon, remaining, maximizing)
+        if key in memo:
+            return memo[key]
+        if agent == demon:
+            return LOSE_SCORE + remaining
+        if agent == start_goal:
+            return WIN_SCORE - remaining
+        if remaining == 0:
+            return heuristic(agent, demon)
+
+        if maximizing:
+            value = float('-inf')
+            moves = gw.neighbors4(agent)
+            if not moves:
+                moves = [agent]
+            for nxt in moves:
+                if nxt == demon:
+                    cand = LOSE_SCORE + remaining - 1
+                else:
+                    cand = minimax(nxt, demon, remaining - 1, False, alpha, beta, memo)
+                value = max(value, cand)
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break
+            memo[key] = int(value)
+            return memo[key]
+        else:
+            value = float('inf')
+            moves = gw.neighbors4(demon)
+            if not moves:
+                moves = [demon]
+            for nxt in moves:
+                if nxt == agent:
+                    cand = LOSE_SCORE + remaining - 1
+                else:
+                    cand = minimax(agent, nxt, remaining - 1, True, alpha, beta, memo)
+                value = min(value, cand)
+                beta = min(beta, value)
+                if alpha >= beta:
+                    break
+            memo[key] = int(value)
+            return memo[key]
+
+    def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord]]:
+        memo: Dict[Tuple[Coord, Coord, int, bool], int] = {}
+        best_val = float('-inf')
+        best_move: Optional[Coord] = None
+        moves = gw.neighbors4(agent)
+        if not moves:
+            moves = [agent]
+        for nxt in moves:
+            if nxt == demon:
+                cand = LOSE_SCORE + depth - 1
+            else:
+                cand = minimax(nxt, demon, depth - 1, False, float('-inf'), float('inf'), memo)
+            prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
+            if cand > best_val or (cand == best_val and prefer):
+                best_val = cand
+                best_move = nxt
+        return int(best_val), best_move
+
+    for step in range(max_steps):
+        if agent_pos == start_goal:
+            break
+        if demon_pos is not None and agent_pos == demon_pos:
+            caught_step = step
+            break
+        if demon_pos is None:
+            demon_path = []
+        score, move = choose_best(agent_pos, demon_pos) if demon_pos is not None else (WIN_SCORE, None)
+        if opening_score is None:
+            opening_score = score
+        if move is None:
+            break
+        agent_pos = move
+        agent_path.append(agent_pos)
+        if demon_pos is not None:
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+            demon_moves = gw.neighbors4(demon_pos)
+            if not demon_moves:
+                demon_moves = [demon_pos]
+            demon_pos = rng.choice(demon_moves)
+            demon_path.append(demon_pos)
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+        if agent_pos == start_goal:
+            break
+
+    success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
+    final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos)
+    return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
 
 # --------- Movement-cost A* with optional gold avoidance (for DP) ---------
 def movement_cost(gw: GridWorld, from_p: Coord, to_p: Coord) -> int:
