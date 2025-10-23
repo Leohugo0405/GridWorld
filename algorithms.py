@@ -28,41 +28,6 @@ def reconstruct(parent: Dict[Coord, Optional[Coord]], t: Coord) -> List[Coord]:
     return list(reversed(path))
 
 # ------------------ Part 1: Pathfinding ------------------
-def dfs_find_path(gw: GridWorld, start: Coord, goal: Coord) -> Optional[List[Coord]]:
-    stack = [start]
-    parent: Dict[Coord, Optional[Coord]] = {start: None}
-    seen: Set[Coord] = set()
-    while stack:
-        cur = stack.pop()
-        if cur in seen: 
-            continue
-        seen.add(cur)
-        if cur == goal:
-            return reconstruct(parent, cur)
-        for nb in gw.neighbors4(cur):
-            if nb not in parent:
-                parent[nb] = cur
-                stack.append(nb)
-    return None
-
-def greedy_best_first(gw: GridWorld, start: Coord, goal: Coord) -> Optional[List[Coord]]:
-    pq: List[Tuple[int, Coord]] = []
-    heapq.heappush(pq, (manhattan(start, goal), start))
-    parent: Dict[Coord, Optional[Coord]] = {start: None}
-    seen: Set[Coord] = set()
-    while pq:
-        _, cur = heapq.heappop(pq)
-        if cur in seen:
-            continue
-        seen.add(cur)
-        if cur == goal:
-            return reconstruct(parent, cur)
-        for nb in gw.neighbors4(cur):
-            if nb not in parent:
-                parent[nb] = cur
-                heapq.heappush(pq, (manhattan(nb, goal), nb))
-    return None
-
 def a_star(gw: GridWorld, start: Coord, goal: Coord) -> Optional[List[Coord]]:
     openpq: List[Tuple[int, Coord]] = []
     gcost: Dict[Coord, int] = {start: 0}
@@ -209,27 +174,26 @@ def minimax_escape(
         maximizing: bool,
         alpha: float,
         beta: float,
-        memo: Dict[Tuple[Coord, Coord, int, bool], Tuple[int, Optional[Coord]]],
-    ) -> Tuple[int, Optional[Coord]]:
+        memo: Dict[Tuple[Coord, Coord, int, bool], int],
+    ) -> int:
         key = (agent, demon, remaining, maximizing)
         if key in memo:
             return memo[key]
         if agent == demon:
             val = LOSE_SCORE + remaining
-            memo[key] = (val, None)
-            return memo[key]
+            memo[key] = int(val)
+            return int(val)
         if agent == start_goal:
             val = WIN_SCORE - remaining
-            memo[key] = (val, None)
-            return memo[key]
+            memo[key] = int(val)
+            return int(val)
         if remaining == 0:
             val = heuristic(agent, demon)
-            memo[key] = (val, None)
-            return memo[key]
+            memo[key] = int(val)
+            return int(val)
 
         if maximizing:
             value = float('-inf')
-            best_move: Optional[Coord] = None
             moves = gw.neighbors4(agent)
             if not moves:
                 moves = [agent]
@@ -238,12 +202,14 @@ def minimax_escape(
                     cand = LOSE_SCORE + remaining - 1
                 else:
                     cand = minimax(nxt, demon, remaining - 1, False, alpha, beta, memo)
-                value = max(value, cand)
+                # cand is int; update numeric value
+                if cand > value:
+                    value = cand
                 alpha = max(alpha, value)
                 if alpha >= beta:
                     break
             memo[key] = int(value)
-            return memo[key]
+            return int(value)
         else:
             value = float('inf')
             moves = gw.neighbors4(demon)
@@ -254,12 +220,14 @@ def minimax_escape(
                     cand = LOSE_SCORE + remaining - 1
                 else:
                     cand = minimax(agent, nxt, remaining - 1, True, alpha, beta, memo)
-                value = min(value, cand)
+                # cand is int; update numeric value
+                if cand < value:
+                    value = cand
                 beta = min(beta, value)
                 if alpha >= beta:
                     break
             memo[key] = int(value)
-            return memo[key]
+            return int(value)
 
     def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord]]:
         memo: Dict[Tuple[Coord, Coord, int, bool], int] = {}
