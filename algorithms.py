@@ -1,6 +1,8 @@
 from __future__ import annotations
-from typing import Tuple, Dict, List, Optional, Set
+from typing import Tuple, Dict, List, Optional, Set, Mapping, DefaultDict
 import heapq, itertools, random
+from collections import defaultdict
+
 from dataclasses import dataclass, field
 
 from grid import GridWorld, Coord
@@ -8,6 +10,15 @@ from grid import GridWorld, Coord
 # ------------------ Utilities ------------------
 def manhattan(a: Coord, b: Coord) -> int:
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
+
+
+ACTIONS: Dict[str, Tuple[int, int]] = {
+    'U': (0, -1),
+    'R': (1, 0),
+    'D': (0, 1),
+    'L': (-1, 0),
+}
+ACTION_ORDER: List[str] = ['U', 'R', 'D', 'L']
 
 def reconstruct(parent: Dict[Coord, Optional[Coord]], t: Coord) -> List[Coord]:
     path = []
@@ -417,8 +428,231 @@ def best_collect_all_golds_dp(gw: GridWorld) -> TrajectoryResult:
     return TrajectoryResult(full_path, score)
 
 
+# ------------------ Part 3: Dynamic programming & RL planning ------------------
+@dataclass
+class ValueIterationResult:
+    values: Dict[Coord, float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    iterations: int
+    converged: bool
+
+
+@dataclass
+class PolicyIterationResult:
+    values: Dict[Coord, float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    policy_iterations: int
+    evaluation_iterations: int
+
+
+@dataclass
+class QLearningResult:
+    q_values: Dict[Tuple[Coord, str], float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    episode_rewards: List[float]
+    episodes: int
+
+
+def _enumerate_states(gw: GridWorld) -> List[Coord]:
+    states: List[Coord] = []
+    for r in range(gw.h):
+        for c in range(gw.w):
+            coord = (c, r)
+            if gw.is_wall(coord):
+                continue
+            states.append(coord)
+    return states
+
+
+def _apply_action(gw: GridWorld, state: Coord, action: str) -> Tuple[Coord, int, bool]:
+    if gw.is_terminal(state):
+        return state, 0, True
+    dx, dy = ACTIONS[action]
+    nxt = (state[0] + dx, state[1] + dy)
+    if not gw.in_bounds(nxt) or gw.is_wall(nxt):
+        return state, gw.wall_penalty, False
+    reward = gw.reward_for(nxt)
+    done = gw.is_terminal(nxt)
+    return nxt, reward, done
+
+
+def _best_action(
+    gw: GridWorld,
+    state: Coord,
+    values: Mapping[Coord, float],
+    gamma: float,
+) -> Tuple[Optional[str], float]:
+    if gw.is_terminal(state):
+        return None, 0.0
+    best_action: Optional[str] = None
+    best_value = float('-inf')
+    best_next = state
+    for action in ACTION_ORDER:
+        nxt, reward, done = _apply_action(gw, state, action)
+        cand = reward + (0.0 if done else gamma * values[nxt])
+        if cand > best_value:
+            best_value = cand
+            best_action = action
+            best_next = nxt
+        elif cand == best_value and best_action is not None:
+            # Tie-breaker: prefer moves closer to goal and avoid standing still
+            cur_dist = manhattan(nxt, gw.goal)
+            best_dist = manhattan(best_next, gw.goal)
+            if nxt != state and (best_next == state or cur_dist < best_dist):
+                best_value = cand
+                best_action = action
+                best_next = nxt
+    return best_action, best_value if best_value != float('-inf') else 0.0
+
+
+def _rollout_policy(gw: GridWorld, policy: Mapping[Coord, Optional[str]], max_steps: int = 200) -> List[Coord]:
+    state = gw.start
+    path: List[Coord] = [state]
+    for _ in range(max_steps):
+        action = policy.get(state)
+        if action is None:
+            break
+        nxt, _, done = _apply_action(gw, state, action)
+        path.append(nxt)
+        state = nxt
+        if done or nxt == path[-2]:
+            break
+    return path
+
+
+def value_iteration_plan(
+    gw: GridWorld,
+    gamma: float = 0.9,
+    theta: float = 1e-4,
+    max_iterations: int = 1000,
+) -> ValueIterationResult:
+    states = _enumerate_states(gw)
+    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    converged = False
+    iterations = 0
+    for iterations in range(1, max_iterations + 1):
+        delta = 0.0
+        for state in states:
+            if gw.is_terminal(state):
+                values[state] = 0.0
+                continue
+            _, best_value = _best_action(gw, state, values, gamma)
+            delta = max(delta, abs(best_value - values[state]))
+            values[state] = best_value
+        if delta < theta:
+            converged = True
+            break
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        action, _ = _best_action(gw, state, values, gamma)
+        policy[state] = action
+    path = _rollout_policy(gw, policy)
+    return ValueIterationResult(values, policy, path, iterations, converged)
+
+
+def policy_iteration_plan(
+    gw: GridWorld,
+    gamma: float = 0.9,
+    theta: float = 1e-4,
+    max_policy_iterations: int = 100,
+) -> PolicyIterationResult:
+    states = _enumerate_states(gw)
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        policy[state] = None if gw.is_terminal(state) else ACTION_ORDER[0]
+    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    policy_iters = 0
+    evaluation_iters_total = 0
+    for policy_iters in range(1, max_policy_iterations + 1):
+        # Policy evaluation
+        while True:
+            delta = 0.0
+            evaluation_iters_total += 1
+            for state in states:
+                if gw.is_terminal(state) or policy[state] is None:
+                    values[state] = 0.0
+                    continue
+                nxt, reward, done = _apply_action(gw, state, policy[state])
+                new_val = reward + (0.0 if done else gamma * values[nxt])
+                delta = max(delta, abs(new_val - values[state]))
+                values[state] = new_val
+            if delta < theta:
+                break
+        # Policy improvement
+        policy_stable = True
+        for state in states:
+            if gw.is_terminal(state):
+                policy[state] = None
+                continue
+            old_action = policy[state]
+            best_action, _ = _best_action(gw, state, values, gamma)
+            policy[state] = best_action
+            if old_action != best_action:
+                policy_stable = False
+        if policy_stable:
+            break
+    path = _rollout_policy(gw, policy)
+    return PolicyIterationResult(values, policy, path, policy_iters, evaluation_iters_total)
+
+
+def q_learning_plan(
+    gw: GridWorld,
+    episodes: int = 500,
+    gamma: float = 0.9,
+    alpha: float = 0.1,
+    epsilon: float = 0.1,
+    epsilon_decay: float = 0.995,
+    min_epsilon: float = 0.01,
+    max_steps_per_episode: int = 200,
+    seed: Optional[int] = None,
+) -> QLearningResult:
+    rng = random.Random(seed)
+    q_values: DefaultDict[Tuple[Coord, str], float] = defaultdict(float)
+    episode_rewards: List[float] = []
+    states = _enumerate_states(gw)
+    for ep in range(episodes):
+        state = gw.start
+        total_reward = 0.0
+        for _ in range(max_steps_per_episode):
+            if gw.is_terminal(state):
+                break
+            if rng.random() < epsilon:
+                action = rng.choice(ACTION_ORDER)
+            else:
+                action = max(
+                    ACTION_ORDER,
+                    key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+                )
+            nxt, reward, done = _apply_action(gw, state, action)
+            best_next = 0.0
+            if not done:
+                best_next = max(q_values[(nxt, a)] for a in ACTION_ORDER)
+            old_q = q_values[(state, action)]
+            q_values[(state, action)] = (1 - alpha) * old_q + alpha * (reward + gamma * best_next)
+            state = nxt
+            total_reward += reward
+            if done:
+                break
+        episode_rewards.append(total_reward)
+        epsilon = max(min_epsilon, epsilon * epsilon_decay)
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        if gw.is_terminal(state):
+            policy[state] = None
+        else:
+            best_action = max(
+                ACTION_ORDER,
+                key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+            )
+            policy[state] = best_action
+    path = _rollout_policy(gw, policy)
+    return QLearningResult(dict(q_values), policy, path, episode_rewards, episodes)
+
+
 # ------------------ Part 1: Step-by-step search generators ------------------
-from dataclasses import dataclass
 
 @dataclass
 class SearchStep:

@@ -61,6 +61,31 @@ class GridWorld:
         if p == self.goal:  return TILE_GOAL
         return self.cells.get(p, TILE_PLAIN)
 
+    # --- Reward helpers -------------------------------------------------
+    def reward_for_type(self, t: str) -> int:
+        if t == TILE_GOAL:
+            return 20
+        if t == TILE_TRAP:
+            return -10
+        if t == TILE_GOLD:
+            return 10
+        if t in (TILE_START, TILE_PLAIN):
+            return -1
+        if t == TILE_WALL:
+            return -5
+        return -1
+
+    def reward_for(self, p: Coord) -> int:
+        """Return the instantaneous reward for moving into ``p``."""
+        return self.reward_for_type(self.cell_type(p))
+
+    @property
+    def wall_penalty(self) -> int:
+        return self.reward_for_type(TILE_WALL)
+
+    def is_terminal(self, p: Coord) -> bool:
+        return self.cell_type(p) in (TILE_GOAL, TILE_TRAP)
+
     def neighbors4(self, p: Coord) -> List[Coord]:
         c, r = p
         res = [(c+1, r), (c-1, r), (c, r+1), (c, r-1)]
