@@ -1,0 +1,446 @@
+import sys, pygame
+from typing import List, Tuple, Optional, Dict, Set
+from grid import GridWorld
+from algorithms import (
+    best_collect_all_golds_dp,
+    dfs_search_steps, greedy_search_steps, astar_search_steps, SearchStep
+)
+
+# ---- Layout & Colors ----
+CELL = 54
+MARGIN = 2
+PADDING = 40
+MENU_H = 36      # 顶部菜单栏高度
+DROPDOWN_W = 220 # 下拉面板宽度
+ITEM_H = 28      # 下拉项高度
+GAP = 8
+
+COL_BG   = (245, 246, 248)
+COL_BAR  = (252, 252, 252)
+COL_MENU = (238, 241, 245)
+COL_MENU_SEP = (210,210,210)
+COL_TEXT = (40, 40, 40)
+COL_ITEM = (250,250,250)
+COL_ITEM_HOVER = (220,235,255)
+COL_TOGGLE_ON  = (220,255,220)
+
+COL_WALL = (90, 90, 90)
+COL_TRAP = (220, 70, 70)
+COL_GOLD = (240, 200, 60)
+COL_PLAIN= (230, 233, 237)
+COL_START= (60, 170, 90)
+COL_GOAL = (255, 170, 0)
+
+COL_DFS    = (70, 130, 180)
+COL_GREEDY = (180, 70, 160)
+COL_ASTAR  = (60, 170, 80)
+COL_PART2  = (30, 144, 255)
+COL_SHADOW = (190, 190, 190)
+COL_FRONTIER = (255, 140, 0)
+COL_VISITED  = (120, 180, 255)
+COL_CURRENT  = (220, 60, 60)
+
+globals_tiles: Dict[str, Optional[pygame.Surface]] = {}
+
+def cell_center(c: int, r: int) -> Tuple[int,int]:
+    x = PADDING + MARGIN + c*(CELL+MARGIN) + CELL//2
+    y = MENU_H + PADDING + MARGIN + r*(CELL+MARGIN) + CELL//2
+    return x, y
+
+def load_tile_images(cell_size: int) -> Dict[str, Optional[pygame.Surface]]:
+    names = {
+        'S': 'start.png','G': 'goal.png','B': 'trap.png','$': 'gold.png',
+        '#': 'wall.png','P': 'plain.png','agent': 'agent.png',
+    }
+    imgs: Dict[str, Optional[pygame.Surface]] = {}
+    # base = __file__.rsplit('/',1)[0]
+    import os
+    for key, fname in names.items():
+        path = os.path.join("assets", fname)
+        try:
+            if os.path.exists(path):
+                img = pygame.image.load(path).convert_alpha()
+                imgs[key] = pygame.transform.smoothscale(img, (cell_size, cell_size))
+            else:
+                imgs[key] = None
+        except Exception:
+            imgs[key] = None
+    return imgs
+
+def draw_grid(screen, gw: GridWorld, tiles: Dict[str, Optional[pygame.Surface]]):
+    screen.fill(COL_BG)
+    pygame.draw.rect(screen, COL_BAR, pygame.Rect(0,0,screen.get_width(), MENU_H))
+    pygame.draw.line(screen, COL_MENU_SEP, (0, MENU_H-1), (screen.get_width(), MENU_H-1))
+    for r in range(gw.h):
+        for c in range(gw.w):
+            x = PADDING + MARGIN + c*(CELL+MARGIN)
+            y = MENU_H + PADDING + MARGIN + r*(CELL+MARGIN)
+            t = gw.cell_type((c,r))
+            symbol = t if t in ('S','G','B','$','#') else 'P'
+            tile = tiles.get(symbol)
+            if tile is not None:
+                screen.blit(tile, (x, y))
+            else:
+                rect = pygame.Rect(x, y, CELL, CELL)
+                if symbol == '#': color = COL_WALL
+                elif symbol == 'B': color = COL_TRAP
+                elif symbol == '$': color = COL_GOLD
+                elif symbol == 'S': color = COL_START
+                elif symbol == 'G': color = COL_GOAL
+                else: color = COL_PLAIN
+                pygame.draw.rect(screen, color, rect, border_radius=6)
+
+def draw_polyline(screen, pts: List[Tuple[int,int]], color, width=4):
+    if len(pts) >= 2:
+        pygame.draw.lines(screen, color, False, pts, width)
+
+# ---- Dropdown UI ----
+class MenuItem:
+    def __init__(self, label: str, action=None, toggle=False, get_state=None):
+        self.label = label
+        self.action = action          # callable()
+        self.toggle = toggle          # 是否是开关项
+        self.get_state = get_state    # callable()->bool，返回开关当前是否开启
+        self.hover = False
+
+class Dropdown:
+    def __init__(self, rect: pygame.Rect, title: str, items: List[MenuItem]):
+        self.rect = rect
+        self.title = title
+        self.items = items
+        self.open = False
+
+    def draw(self, screen, font):
+        # 顶部菜单按钮
+        bg = COL_MENU if not self.open else (225,232,245)
+        pygame.draw.rect(screen, bg, self.rect, border_radius=6)
+        pygame.draw.rect(screen, COL_MENU_SEP, self.rect, width=1, border_radius=6)
+        label = font.render(self.title, True, COL_TEXT)
+        screen.blit(label, (self.rect.x+10, self.rect.y + (self.rect.h-label.get_height())//2))
+        # 下拉面板
+        if self.open:
+            panel = pygame.Rect(self.rect.x, self.rect.bottom+2, DROPDOWN_W, ITEM_H*len(self.items)+6)
+            pygame.draw.rect(screen, (255,255,255), panel, border_radius=8)
+            pygame.draw.rect(screen, COL_MENU_SEP, panel, width=1, border_radius=8)
+            # 每一项
+            for i, it in enumerate(self.items):
+                r = pygame.Rect(panel.x+3, panel.y+3 + i*ITEM_H, panel.w-6, ITEM_H-4)
+                it.hover = r.collidepoint(pygame.mouse.get_pos())
+                bg = COL_ITEM_HOVER if it.hover else COL_ITEM
+                if it.toggle and it.get_state and it.get_state():
+                    bg = COL_TOGGLE_ON
+                pygame.draw.rect(screen, bg, r, border_radius=6)
+                txt = font.render(it.label, True, COL_TEXT)
+                screen.blit(txt, (r.x+10, r.y+(r.h-txt.get_height())//2))
+
+    def handle_click(self, pos):
+        if self.rect.collidepoint(pos):
+            self.open = not self.open
+            return True, None
+        if self.open:
+            # 点击面板中的条目
+            panel_top = self.rect.bottom+2
+            panel = pygame.Rect(self.rect.x, panel_top, DROPDOWN_W, ITEM_H*len(self.items)+6)
+            if panel.collidepoint(pos):
+                idx = (pos[1] - (panel_top+3)) // ITEM_H
+                if 0 <= idx < len(self.items):
+                    self.open = False
+                    return True, self.items[idx]
+            else:
+                # 点击其它区域关闭
+                self.open = False
+        return False, None
+
+# ---- Animations ----
+class PathAnim:
+    def __init__(self, path: Optional[List[Tuple[int,int]]], color=(0,0,0), width=5, step_ms=220):
+        self.path = path or []
+        self.color = color
+        self.width = width
+        self.step_ms = step_ms
+        self.idx = 0
+        self.timer = 0
+        self.play = False  # 初始为暂停，只有点击“开始/暂停”按钮才开始
+        self.centers = [cell_center(c,r) for (c,r) in self.path]
+        self.visible = True
+
+    def reset(self):
+        self.idx = 0
+        self.timer = 0
+        # 不改变 self.play，避免重置时自动播放
+
+    def update(self, dt):
+        if not self.play or len(self.path) < 2: return
+        self.timer += dt
+        while self.timer >= self.step_ms and self.idx < len(self.path)-1:
+            self.timer -= self.step_ms; self.idx += 1
+    def draw(self, screen):
+        if not self.visible: return
+        if len(self.centers) >= 2:
+            upto = max(2, self.idx+1)
+            draw_polyline(screen, self.centers[:upto], self.color, self.width)
+        if self.centers:
+            head = self.centers[self.idx]
+            pygame.draw.circle(screen, self.color, head, 8)
+
+def reconstruct_to(parent: Dict[Tuple[int,int], Optional[Tuple[int,int]]], cur: Tuple[int,int]):
+    path: List[Tuple[int,int]] = []
+    t = cur
+    while t is not None and t in parent:
+        path.append(t); t = parent[t]
+    return list(reversed(path))
+
+class SearchAnimator:
+    def __init__(self, steps: List[SearchStep], step_ms=120):
+        self.steps = steps; self.idx = 0; self.timer = 0
+        self.step_ms = step_ms; self.play = False  # 初始暂停
+        self.algo = steps[0].algo if steps else ""
+    def reset(self):
+        self.idx = 0
+        self.timer = 0
+        # 不改变 self.play
+
+    def update(self, dt):
+        if not self.play or not self.steps: return
+        self.timer += dt
+        while self.timer >= self.step_ms and self.idx < len(self.steps)-1:
+            self.timer -= self.step_ms; self.idx += 1
+    def draw(self, screen):
+        if not self.steps: return
+        st = self.steps[self.idx]
+        for v in st.visited:
+            x = PADDING + MARGIN + v[0]*(CELL+MARGIN)
+            y = MENU_H + PADDING + MARGIN + v[1]*(CELL+MARGIN)
+            pygame.draw.rect(screen, COL_VISITED, (x,y,CELL,CELL), border_radius=6)
+        for f in st.frontier:
+            x = PADDING + MARGIN + f[0]*(CELL+MARGIN)
+            y = MENU_H + PADDING + MARGIN + f[1]*(CELL+MARGIN)
+            pygame.draw.rect(screen, COL_FRONTIER, (x,y,CELL,CELL), border_radius=6)
+        if st.current is not None:
+            x = PADDING + MARGIN + st.current[0]*(CELL+MARGIN)
+            y = MENU_H + PADDING + MARGIN + st.current[1]*(CELL+MARGIN)
+            pygame.draw.rect(screen, COL_CURRENT, (x,y,CELL,CELL), border_radius=6)
+            pts = [cell_center(c,r) for (c,r) in reconstruct_to(st.parent, st.current)]
+            draw_polyline(screen, pts, (0,0,0), 3)
+
+# 新增：使用 agent.png 的简单路径动画（用于 Collect-All）
+class AgentPathAnim:
+    def __init__(self, gw: GridWorld, path: Optional[List[Tuple[int,int]]], step_ms=160):
+        self.gw = gw
+        self.path = path or []
+        self.centers = [cell_center(c, r) for (c, r) in self.path]
+        self.step_ms = step_ms
+        self.idx = 0
+        self.timer = 0
+        self.play = False  # 初始暂停，仅按钮控制
+        # 记录初始的金矿位置与已采集集合
+        self.orig_golds: Set[Tuple[int,int]] = {pos for pos, t in self.gw.cells.items() if t == '$'}
+        self.collected: Set[Tuple[int,int]] = set()
+
+    def reset(self):
+        # 重置并恢复已采集的金矿
+        for pos in self.collected:
+            self.gw.cells[pos] = '$'
+        self.collected.clear()
+        self.idx = 0
+        self.timer = 0
+        # 不改 play
+
+    def update(self, dt):
+        if not self.play or len(self.path) < 2: return
+        self.timer += dt
+        while self.timer >= self.step_ms and self.idx < len(self.path) - 1:
+            self.timer -= self.step_ms
+            prev = self.path[self.idx]   # 将要离开的格子
+            self.idx += 1                # 移动到下一格
+            # 若刚离开的格子原本是金矿，则此时视为采集完成 -> 变为道路
+            if prev in self.orig_golds and prev not in self.collected:
+                self.gw.cells[prev] = 'P'
+                self.collected.add(prev)
+
+    def draw(self, screen):
+        if not self.centers: return
+        cx, cy = self.centers[self.idx]
+        img = globals_tiles.get('agent')
+        if img is not None:
+            rect = img.get_rect(center=(cx, cy))
+            screen.blit(img, rect.topleft)
+        else:
+            s = CELL // 2
+            pygame.draw.rect(screen, (60,170,90), (cx - s//2, cy - s//2, s, s), border_radius=6)
+
+# ---- App ----
+def main():
+    # if len(sys.argv) < 2:
+    #     print("Usage: python visualize_pygame.py map.json"); sys.exit(1)
+    gw = GridWorld.from_json()
+
+    pygame.init()
+    font = pygame.font.SysFont("Arial", 18)
+    W = gw.w*CELL + (gw.w+1)*MARGIN + 2*PADDING
+    H = MENU_H + gw.h*CELL + (gw.h+1)*MARGIN + 2*PADDING + 40
+    screen = pygame.display.set_mode((W, H))
+    pygame.display.set_caption("GridWorld (Dropdown Menu)")
+
+    global globals_tiles
+    globals_tiles = load_tile_images(CELL)
+
+    # 预计算
+    steps_dfs    = list(dfs_search_steps(gw, gw.start, gw.goal))
+    steps_greedy = list(greedy_search_steps(gw, gw.start, gw.goal))
+    steps_astar  = list(astar_search_steps(gw, gw.start, gw.goal))
+    res2 = best_collect_all_golds_dp(gw)
+    p_collect = res2.path
+
+    # 动画器：Collect-All 使用 AgentPathAnim
+    anim_part2  = AgentPathAnim(gw, p_collect, step_ms=160)
+    anim_search = SearchAnimator(steps_dfs, step_ms=120)
+
+    # 模式/播放
+    MODE = 4
+    is_playing = False
+    def apply_play_state():
+        anim_part2.play = is_playing
+        anim_search.play = is_playing
+    def set_playing(state: bool):
+        nonlocal is_playing
+        is_playing = state
+        apply_play_state()
+
+    # ---- Dropdown menus ----
+    menu_x = PADDING
+    mode_rect     = pygame.Rect(menu_x, 4, 120, MENU_H-8); menu_x += mode_rect.w + GAP
+    controls_rect = pygame.Rect(menu_x, 4, 120, MENU_H-8); menu_x += controls_rect.w + GAP
+    algo_rect     = pygame.Rect(menu_x, 4, 140, MENU_H-8); menu_x += algo_rect.w + GAP
+    pause_rect    = pygame.Rect(menu_x, 4, 120, MENU_H-8)
+
+    # 移除 Overlay/Shadow 开关
+    # def is_on(...) / do_toggle(...) 已删除
+
+    # 构造菜单项（删除 Overlay）
+    mode_items = [
+        MenuItem("Part1: Search",       lambda: set_mode(4)),
+        MenuItem("Part2: Collect-All",  lambda: set_mode(2)),
+    ]
+    control_items = [
+        MenuItem("Restart",    lambda: on_restart()),
+        MenuItem("Speed -",    lambda: on_speed(-1)),
+        MenuItem("Speed +",    lambda: on_speed(+1)),
+    ]
+    algo_items = [
+        MenuItem("DFS",         lambda: set_algo("dfs")),
+        MenuItem("Greedy",      lambda: set_algo("greedy")),
+        MenuItem("A*",          lambda: set_algo("astar")),
+    ]
+
+    dropdowns = [
+        Dropdown(mode_rect, "Mode", mode_items),
+        Dropdown(controls_rect, "Controls", control_items),
+        Dropdown(algo_rect, "Algorithm", algo_items),
+    ]
+
+    # 简易按钮（开始/暂停）
+    class Button:
+        def __init__(self, rect: pygame.Rect, label: str, on_click, get_state=None):
+            self.rect = rect; self.label = label; self.on_click = on_click; self.get_state = get_state
+        def draw(self, screen, font):
+            active = self.get_state() if self.get_state else False
+            bg = (200, 235, 200) if active else COL_MENU
+            pygame.draw.rect(screen, bg, self.rect, border_radius=6)
+            pygame.draw.rect(screen, COL_MENU_SEP, self.rect, width=1, border_radius=6)
+            txt = font.render(self.label, True, COL_TEXT)
+            screen.blit(txt, (self.rect.x+10, self.rect.y + (self.rect.h-txt.get_height())//2))
+        def handle_click(self, pos) -> bool:
+            if self.rect.collidepoint(pos):
+                if self.on_click: self.on_click()
+                return True
+            return False
+
+    play_button = Button(pause_rect, "Start/Pause", lambda: on_play_pause(), get_state=lambda: is_playing)
+
+    # ---- 菜单回调 ----
+    def set_mode(m: int):
+        nonlocal MODE
+        MODE = m
+        apply_play_state()
+
+    def set_algo(name: str):
+        nonlocal MODE
+        if name == "dfs":
+            MODE = 4
+            anim_search.steps = steps_dfs
+            anim_search.algo = "DFS"
+            anim_search.reset()
+        elif name == "greedy":
+            MODE = 4
+            anim_search.steps = steps_greedy
+            anim_search.algo = "Greedy"
+            anim_search.reset()
+        elif name == "astar":
+            MODE = 4
+            anim_search.steps = steps_astar
+            anim_search.algo = "A*"
+            anim_search.reset()
+        elif name == "collect":
+            MODE = 2
+            anim_part2.reset()
+        apply_play_state()
+
+    def on_play_pause():
+        set_playing(not is_playing)
+
+    def on_restart():
+        anim_part2.reset(); anim_search.reset()
+        apply_play_state()
+
+    def on_speed(delta: int):
+        step = -20 if delta>0 else +20
+        anim_part2.step_ms = max(40, anim_part2.step_ms + step)
+        anim_search.step_ms = max(40, anim_search.step_ms + step)
+
+    # ---- Main loop ----
+    clock = pygame.time.Clock()
+    running = True
+    while running:
+        dt = clock.tick(60)
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                running = False
+            elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                clicked_any = False
+                for d in dropdowns:
+                    handled, item = d.handle_click(e.pos)
+                    if handled:
+                        clicked_any = True
+                        if item and item.action:
+                            item.action()
+                if not clicked_any and play_button.handle_click(e.pos):
+                    clicked_any = True
+                if not clicked_any:
+                    for d in dropdowns: d.open = False
+
+        # 更新动画（无 Overlay）
+        if MODE == 2:
+            anim_part2.update(dt)
+        else:
+            anim_search.update(dt)
+
+        # 绘制
+        draw_grid(screen, gw, globals_tiles)
+        if MODE == 2:
+            anim_part2.draw(screen)
+        else:
+            anim_search.draw(screen)
+
+        for d in dropdowns: d.draw(screen, font)
+        play_button.draw(screen, font)
+
+        info = f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
+        txt = font.render(info, True, (60,60,60))
+        screen.blit(txt, (PADDING, H - txt.get_height() - 10))
+        pygame.display.flip()
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
