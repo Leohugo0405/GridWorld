@@ -1,9 +1,10 @@
-import sys, pygame
+import sys, random, pygame
 from typing import List, Tuple, Optional, Dict, Set
 from grid import GridWorld
 from algorithms import (
     best_collect_all_golds_dp,
-    dfs_search_steps, greedy_search_steps, astar_search_steps, SearchStep
+    dfs_search_steps, greedy_search_steps, astar_search_steps, SearchStep,
+    minimax_escape, MinimaxEscapeResult,
 )
 
 # ---- Layout & Colors ----
@@ -50,7 +51,7 @@ def cell_center(c: int, r: int) -> Tuple[int,int]:
 def load_tile_images(cell_size: int) -> Dict[str, Optional[pygame.Surface]]:
     names = {
         'S': 'start.png','G': 'goal.png','B': 'trap.png','$': 'gold.png',
-        '#': 'wall.png','P': 'plain.png','agent': 'agent.png',
+        '#': 'wall.png','P': 'plain.png','agent': 'agent.png','demon': 'demon.png',
     }
     imgs: Dict[str, Optional[pygame.Surface]] = {}
     # base = __file__.rsplit('/',1)[0]
@@ -89,6 +90,16 @@ def draw_grid(screen, gw: GridWorld, tiles: Dict[str, Optional[pygame.Surface]])
                 elif symbol == 'G': color = COL_GOAL
                 else: color = COL_PLAIN
                 pygame.draw.rect(screen, color, rect, border_radius=6)
+    if gw.demon is not None:
+        dc, dr = gw.demon
+        x = PADDING + MARGIN + dc*(CELL+MARGIN)
+        y = MENU_H + PADDING + MARGIN + dr*(CELL+MARGIN)
+        tile = tiles.get('demon')
+        if tile is not None:
+            screen.blit(tile, (x, y))
+        else:
+            rect = pygame.Rect(x + CELL//4, y + CELL//4, CELL//2, CELL//2)
+            pygame.draw.rect(screen, (200, 60, 60), rect, border_radius=6)
 
 def draw_polyline(screen, pts: List[Tuple[int,int]], color, width=4):
     if len(pts) >= 2:
@@ -269,6 +280,75 @@ class AgentPathAnim:
             s = CELL // 2
             pygame.draw.rect(screen, (60,170,90), (cx - s//2, cy - s//2, s, s), border_radius=6)
 
+# ---- Minimax escape animation ----
+class MinimaxAnimator:
+    def __init__(self, gw: GridWorld, result: Optional[MinimaxEscapeResult], step_ms=200):
+        self.gw = gw
+        self.step_ms = step_ms
+        self.play = False
+        self.result: Optional[MinimaxEscapeResult] = None
+        self.agent_centers: List[Tuple[int,int]] = []
+        self.demon_centers: List[Tuple[int,int]] = []
+        self.idx = 0
+        self.timer = 0
+        self.set_result(result)
+
+    def set_result(self, result: Optional[MinimaxEscapeResult]):
+        self.result = result
+        self.agent_centers = [cell_center(c, r) for (c, r) in (result.agent_path if result else [])]
+        self.demon_centers = [cell_center(c, r) for (c, r) in (result.demon_path if result else [])]
+        self.idx = 0
+        self.timer = 0
+        self._apply_positions()
+
+    def _apply_positions(self):
+        if not self.result:
+            self.gw.demon = None
+            return
+        if self.result.demon_path:
+            demon_idx = min(self.idx, len(self.result.demon_path) - 1)
+            self.gw.demon = self.result.demon_path[demon_idx]
+        elif self.result.demon_start is not None:
+            self.gw.demon = self.result.demon_start
+        else:
+            self.gw.demon = None
+
+    def reset(self):
+        self.idx = 0
+        self.timer = 0
+        self._apply_positions()
+
+    def update(self, dt):
+        if not self.play or not self.result or len(self.agent_centers) < 2:
+            self._apply_positions()
+            return
+        self.timer += dt
+        advanced = False
+        while self.timer >= self.step_ms and self.idx < len(self.agent_centers) - 1:
+            self.timer -= self.step_ms
+            self.idx += 1
+            advanced = True
+        if advanced:
+            self._apply_positions()
+
+    def draw(self, screen):
+        if not self.result or not self.agent_centers:
+            return
+        self._apply_positions()
+        upto = max(1, self.idx + 1)
+        draw_polyline(screen, self.agent_centers[:upto], COL_PART2, 4)
+        ax, ay = self.agent_centers[self.idx]
+        agent_img = globals_tiles.get('agent')
+        if agent_img is not None:
+            rect = agent_img.get_rect(center=(ax, ay))
+            screen.blit(agent_img, rect.topleft)
+        else:
+            pygame.draw.circle(screen, COL_START, (ax, ay), CELL//3)
+        if self.demon_centers:
+            upto_d = min(self.idx + 1, len(self.demon_centers))
+            if upto_d >= 2:
+                draw_polyline(screen, self.demon_centers[:upto_d], (200, 60, 60), 3)
+
 # ---- App ----
 def main():
     # if len(sys.argv) < 2:
@@ -295,13 +375,30 @@ def main():
     # 动画器：Collect-All 使用 AgentPathAnim
     anim_part2  = AgentPathAnim(gw, p_collect, step_ms=160)
     anim_search = SearchAnimator(steps_dfs, step_ms=120)
+    anim_minimax = MinimaxAnimator(gw, None, step_ms=200)
+
+    rng = random.Random()
+    minimax_result: Optional[MinimaxEscapeResult] = None
+
+    def recompute_minimax():
+        nonlocal minimax_result
+        gw.randomize_demon(rng)
+        seed = rng.randrange(10**9)
+        minimax_result = minimax_escape(gw, depth=6, max_steps=80, demon_start=gw.demon, seed=seed)
+        anim_minimax.set_result(minimax_result)
+
+    recompute_minimax()
 
     # 模式/播放
-    MODE = 4
+    MODE_SEARCH = 4
+    MODE_COLLECT = 2
+    MODE_MINIMAX = 6
+    MODE = MODE_SEARCH
     is_playing = False
     def apply_play_state():
         anim_part2.play = is_playing
         anim_search.play = is_playing
+        anim_minimax.play = is_playing
     def set_playing(state: bool):
         nonlocal is_playing
         is_playing = state
@@ -319,8 +416,9 @@ def main():
 
     # 构造菜单项（删除 Overlay）
     mode_items = [
-        MenuItem("Part1: Search",       lambda: set_mode(4)),
-        MenuItem("Part2: Collect-All",  lambda: set_mode(2)),
+        MenuItem("Part1: Search",       lambda: set_mode(MODE_SEARCH)),
+        MenuItem("Part2: Collect-All",  lambda: set_mode(MODE_COLLECT)),
+        MenuItem("Part3: Minimax",      lambda: set_mode(MODE_MINIMAX)),
     ]
     control_items = [
         MenuItem("Restart",    lambda: on_restart()),
@@ -331,6 +429,7 @@ def main():
         MenuItem("DFS",         lambda: set_algo("dfs")),
         MenuItem("Greedy",      lambda: set_algo("greedy")),
         MenuItem("A*",          lambda: set_algo("astar")),
+        MenuItem("Minimax",     lambda: set_algo("minimax")),
     ]
 
     dropdowns = [
@@ -362,41 +461,48 @@ def main():
     def set_mode(m: int):
         nonlocal MODE
         MODE = m
+        if MODE == MODE_MINIMAX:
+            anim_minimax.reset()
         apply_play_state()
 
     def set_algo(name: str):
         nonlocal MODE
         if name == "dfs":
-            MODE = 4
+            MODE = MODE_SEARCH
             anim_search.steps = steps_dfs
             anim_search.algo = "DFS"
             anim_search.reset()
         elif name == "greedy":
-            MODE = 4
+            MODE = MODE_SEARCH
             anim_search.steps = steps_greedy
             anim_search.algo = "Greedy"
             anim_search.reset()
         elif name == "astar":
-            MODE = 4
+            MODE = MODE_SEARCH
             anim_search.steps = steps_astar
             anim_search.algo = "A*"
             anim_search.reset()
         elif name == "collect":
-            MODE = 2
+            MODE = MODE_COLLECT
             anim_part2.reset()
+        elif name == "minimax":
+            MODE = MODE_MINIMAX
+            recompute_minimax()
+            anim_minimax.reset()
         apply_play_state()
 
     def on_play_pause():
         set_playing(not is_playing)
 
     def on_restart():
-        anim_part2.reset(); anim_search.reset()
+        anim_part2.reset(); anim_search.reset(); recompute_minimax(); anim_minimax.reset()
         apply_play_state()
 
     def on_speed(delta: int):
         step = -20 if delta>0 else +20
         anim_part2.step_ms = max(40, anim_part2.step_ms + step)
         anim_search.step_ms = max(40, anim_search.step_ms + step)
+        anim_minimax.step_ms = max(60, anim_minimax.step_ms + step)
 
     # ---- Main loop ----
     clock = pygame.time.Clock()
@@ -420,22 +526,33 @@ def main():
                     for d in dropdowns: d.open = False
 
         # 更新动画（无 Overlay）
-        if MODE == 2:
+        if MODE == MODE_COLLECT:
             anim_part2.update(dt)
+        elif MODE == MODE_MINIMAX:
+            anim_minimax.update(dt)
         else:
             anim_search.update(dt)
 
         # 绘制
         draw_grid(screen, gw, globals_tiles)
-        if MODE == 2:
+        if MODE == MODE_COLLECT:
             anim_part2.draw(screen)
+        elif MODE == MODE_MINIMAX:
+            anim_minimax.draw(screen)
         else:
             anim_search.draw(screen)
 
         for d in dropdowns: d.draw(screen, font)
         play_button.draw(screen, font)
 
-        info = f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
+        minimax_info = "N/A"
+        if minimax_result:
+            status = "Safe" if minimax_result.success else "Caught"
+            minimax_info = f"{status} len={len(minimax_result.agent_path)}"
+        info = (
+            f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
+            f" | Minimax {minimax_info}"
+        )
         txt = font.render(info, True, (60,60,60))
         screen.blit(txt, (PADDING, H - txt.get_height() - 10))
         pygame.display.flip()
