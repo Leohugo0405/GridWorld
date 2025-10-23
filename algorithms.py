@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Tuple, Dict, List, Optional, Set
-import heapq, itertools
+from typing import Tuple, Dict, List, Optional, Set, Mapping, DefaultDict
+import heapq, itertools, random
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from grid import GridWorld, Coord
@@ -8,6 +9,15 @@ from grid import GridWorld, Coord
 # ------------------ Utilities ------------------
 def manhattan(a: Coord, b: Coord) -> int:
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
+
+
+ACTIONS: Dict[str, Tuple[int, int]] = {
+    'U': (0, -1),
+    'R': (1, 0),
+    'D': (0, 1),
+    'L': (-1, 0),
+}
+ACTION_ORDER: List[str] = ['U', 'R', 'D', 'L']
 
 def reconstruct(parent: Dict[Coord, Optional[Coord]], t: Coord) -> List[Coord]:
     path = []
@@ -79,6 +89,7 @@ class TrajectoryResult:
     path: List[Coord]
     total_reward: int
 
+
 def total_reward_for_path(gw: GridWorld, path: List[Coord]) -> int:
     if not path: return -10**9
     # step -1; stepping into trap -10; stepping into gold +10 (once); reaching G +20
@@ -147,6 +158,191 @@ def best_collect_all_golds_then_exit(gw: GridWorld, max_perm: int = 7) -> Trajec
         best_score = total_reward_for_path(gw, best_path)
 
     return TrajectoryResult(best_path, best_score)
+
+# ------------------ Demon escape via minimax ------------------
+@dataclass
+class MinimaxEscapeResult:
+    agent_path: List[Coord]
+    demon_path: List[Coord]
+    success: bool
+    demon_start: Optional[Coord]
+    caught_step: Optional[int]
+    score: int
+
+
+def minimax_escape(
+    gw: GridWorld,
+    depth: int = 6,
+    max_steps: int = 80,
+    demon_start: Optional[Coord] = None,
+    seed: Optional[int] = None,
+) -> MinimaxEscapeResult:
+    """Simulate an escape attempt using minimax planning against a roaming demon."""
+
+    depth = max(1, depth)
+    rng = random.Random(seed)
+    start_agent = gw.start
+    start_goal = gw.goal
+    demon_pos = demon_start if demon_start is not None else gw.demon
+    if demon_pos is None:
+        demon_pos = gw.randomize_demon(rng)
+
+    agent_pos = start_agent
+    agent_path: List[Coord] = [agent_pos]
+    demon_path: List[Coord] = [demon_pos] if demon_pos is not None else []
+    opening_score: Optional[int] = None
+    caught_step: Optional[int] = None
+
+    WIN_SCORE = 1000
+    LOSE_SCORE = -1000
+
+    def heuristic(a: Coord, d: Optional[Coord]) -> int:
+        dist_goal = manhattan(a, start_goal)
+        dist_demon = manhattan(a, d) if d is not None else gw.w + gw.h
+        return -10 * dist_goal + 3 * dist_demon
+
+    def minimax(
+        agent: Coord,
+        demon: Coord,
+        remaining: int,
+        maximizing: bool,
+        alpha: float,
+        beta: float,
+        memo: Dict[Tuple[Coord, Coord, int, bool], Tuple[int, Optional[Coord]]],
+    ) -> Tuple[int, Optional[Coord]]:
+        key = (agent, demon, remaining, maximizing)
+        if key in memo:
+            return memo[key]
+        if agent == demon:
+            val = LOSE_SCORE + remaining
+            memo[key] = (val, None)
+            return memo[key]
+        if agent == start_goal:
+            val = WIN_SCORE - remaining
+            memo[key] = (val, None)
+            return memo[key]
+        if remaining == 0:
+            val = heuristic(agent, demon)
+            memo[key] = (val, None)
+            return memo[key]
+
+        if maximizing:
+            value = float('-inf')
+            best_move: Optional[Coord] = None
+            moves = gw.neighbors4(agent)
+            if not moves:
+                moves = [agent]
+            for nxt in moves:
+                if nxt == demon:
+                    cand_val = LOSE_SCORE + remaining - 1
+                else:
+                    cand_val, _ = minimax(
+                        nxt, demon, remaining - 1, False, alpha, beta, memo
+                    )
+                if cand_val > value:
+                    value = cand_val
+                    best_move = nxt
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break
+            if best_move is None:
+                best_move = agent
+            memo[key] = (int(value), best_move)
+            return memo[key]
+        else:
+            value = float('inf')
+            best_reply: Optional[Coord] = None
+            moves = gw.neighbors4(demon)
+            if not moves:
+                moves = [demon]
+            for nxt in moves:
+                if nxt == agent:
+                    cand_val = LOSE_SCORE + remaining - 1
+                else:
+                    cand_val, _ = minimax(
+                        agent, nxt, remaining - 1, True, alpha, beta, memo
+                    )
+                if cand_val < value:
+                    value = cand_val
+                    best_reply = nxt
+                beta = min(beta, value)
+                if alpha >= beta:
+                    break
+            if best_reply is None:
+                best_reply = demon
+            memo[key] = (int(value), best_reply)
+            return memo[key]
+
+    def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord], Optional[Coord]]:
+        memo: Dict[Tuple[Coord, Coord, int, bool], Tuple[int, Optional[Coord]]] = {}
+        best_val = float('-inf')
+        best_move: Optional[Coord] = None
+        best_reply: Optional[Coord] = None
+        moves = gw.neighbors4(agent)
+        if not moves:
+            moves = [agent]
+        for nxt in moves:
+            if nxt == demon:
+                cand_val = LOSE_SCORE + depth - 1
+                demon_reply = None
+            else:
+                cand_val, demon_reply = minimax(
+                    nxt, demon, depth - 1, False, float('-inf'), float('inf'), memo
+                )
+            prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
+            if cand_val > best_val or (cand_val == best_val and prefer):
+                best_val = cand_val
+                best_move = nxt
+                best_reply = demon_reply
+        return int(best_val), best_move, best_reply
+
+    visited_states: Set[Tuple[Coord, Optional[Coord]]] = {(agent_pos, demon_pos)}
+
+    for step in range(max_steps):
+        if agent_pos == start_goal:
+            break
+        if demon_pos is not None and agent_pos == demon_pos:
+            caught_step = step
+            break
+        if demon_pos is None:
+            demon_path = []
+        score, move, demon_reply = (
+            choose_best(agent_pos, demon_pos)
+            if demon_pos is not None
+            else (WIN_SCORE, None, None)
+        )
+        if opening_score is None:
+            opening_score = score
+        if move is None:
+            break
+        agent_pos = move
+        agent_path.append(agent_pos)
+        if demon_pos is not None:
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+            if demon_reply is None:
+                demon_moves = gw.neighbors4(demon_pos)
+                if not demon_moves:
+                    demon_moves = [demon_pos]
+                demon_pos = rng.choice(demon_moves)
+            else:
+                demon_pos = demon_reply
+            demon_path.append(demon_pos)
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+        if agent_pos == start_goal:
+            break
+
+        state = (agent_pos, demon_pos)
+        if state in visited_states:
+            break
+        visited_states.add(state)
+
+    success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
+    final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos)
+    return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
 
 # --------- Movement-cost A* with optional gold avoidance (for DP) ---------
 def movement_cost(gw: GridWorld, from_p: Coord, to_p: Coord) -> int:
@@ -278,8 +474,231 @@ def best_collect_all_golds_dp(gw: GridWorld) -> TrajectoryResult:
     return TrajectoryResult(full_path, score)
 
 
+# ------------------ Part 3: Dynamic programming & RL planning ------------------
+@dataclass
+class ValueIterationResult:
+    values: Dict[Coord, float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    iterations: int
+    converged: bool
+
+
+@dataclass
+class PolicyIterationResult:
+    values: Dict[Coord, float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    policy_iterations: int
+    evaluation_iterations: int
+
+
+@dataclass
+class QLearningResult:
+    q_values: Dict[Tuple[Coord, str], float]
+    policy: Dict[Coord, Optional[str]]
+    path: List[Coord]
+    episode_rewards: List[float]
+    episodes: int
+
+
+def _enumerate_states(gw: GridWorld) -> List[Coord]:
+    states: List[Coord] = []
+    for r in range(gw.h):
+        for c in range(gw.w):
+            coord = (c, r)
+            if gw.is_wall(coord):
+                continue
+            states.append(coord)
+    return states
+
+
+def _apply_action(gw: GridWorld, state: Coord, action: str) -> Tuple[Coord, int, bool]:
+    if gw.is_terminal(state):
+        return state, 0, True
+    dx, dy = ACTIONS[action]
+    nxt = (state[0] + dx, state[1] + dy)
+    if not gw.in_bounds(nxt) or gw.is_wall(nxt):
+        return state, gw.wall_penalty, False
+    reward = gw.reward_for(nxt)
+    done = gw.is_terminal(nxt)
+    return nxt, reward, done
+
+
+def _best_action(
+    gw: GridWorld,
+    state: Coord,
+    values: Mapping[Coord, float],
+    gamma: float,
+) -> Tuple[Optional[str], float]:
+    if gw.is_terminal(state):
+        return None, 0.0
+    best_action: Optional[str] = None
+    best_value = float('-inf')
+    best_next = state
+    for action in ACTION_ORDER:
+        nxt, reward, done = _apply_action(gw, state, action)
+        cand = reward + (0.0 if done else gamma * values[nxt])
+        if cand > best_value:
+            best_value = cand
+            best_action = action
+            best_next = nxt
+        elif cand == best_value and best_action is not None:
+            # Tie-breaker: prefer moves closer to goal and avoid standing still
+            cur_dist = manhattan(nxt, gw.goal)
+            best_dist = manhattan(best_next, gw.goal)
+            if nxt != state and (best_next == state or cur_dist < best_dist):
+                best_value = cand
+                best_action = action
+                best_next = nxt
+    return best_action, best_value if best_value != float('-inf') else 0.0
+
+
+def _rollout_policy(gw: GridWorld, policy: Mapping[Coord, Optional[str]], max_steps: int = 200) -> List[Coord]:
+    state = gw.start
+    path: List[Coord] = [state]
+    for _ in range(max_steps):
+        action = policy.get(state)
+        if action is None:
+            break
+        nxt, _, done = _apply_action(gw, state, action)
+        path.append(nxt)
+        state = nxt
+        if done or nxt == path[-2]:
+            break
+    return path
+
+
+def value_iteration_plan(
+    gw: GridWorld,
+    gamma: float = 0.9,
+    theta: float = 1e-4,
+    max_iterations: int = 1000,
+) -> ValueIterationResult:
+    states = _enumerate_states(gw)
+    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    converged = False
+    iterations = 0
+    for iterations in range(1, max_iterations + 1):
+        delta = 0.0
+        for state in states:
+            if gw.is_terminal(state):
+                values[state] = 0.0
+                continue
+            _, best_value = _best_action(gw, state, values, gamma)
+            delta = max(delta, abs(best_value - values[state]))
+            values[state] = best_value
+        if delta < theta:
+            converged = True
+            break
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        action, _ = _best_action(gw, state, values, gamma)
+        policy[state] = action
+    path = _rollout_policy(gw, policy)
+    return ValueIterationResult(values, policy, path, iterations, converged)
+
+
+def policy_iteration_plan(
+    gw: GridWorld,
+    gamma: float = 0.9,
+    theta: float = 1e-4,
+    max_policy_iterations: int = 100,
+) -> PolicyIterationResult:
+    states = _enumerate_states(gw)
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        policy[state] = None if gw.is_terminal(state) else ACTION_ORDER[0]
+    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    policy_iters = 0
+    evaluation_iters_total = 0
+    for policy_iters in range(1, max_policy_iterations + 1):
+        # Policy evaluation
+        while True:
+            delta = 0.0
+            evaluation_iters_total += 1
+            for state in states:
+                if gw.is_terminal(state) or policy[state] is None:
+                    values[state] = 0.0
+                    continue
+                nxt, reward, done = _apply_action(gw, state, policy[state])
+                new_val = reward + (0.0 if done else gamma * values[nxt])
+                delta = max(delta, abs(new_val - values[state]))
+                values[state] = new_val
+            if delta < theta:
+                break
+        # Policy improvement
+        policy_stable = True
+        for state in states:
+            if gw.is_terminal(state):
+                policy[state] = None
+                continue
+            old_action = policy[state]
+            best_action, _ = _best_action(gw, state, values, gamma)
+            policy[state] = best_action
+            if old_action != best_action:
+                policy_stable = False
+        if policy_stable:
+            break
+    path = _rollout_policy(gw, policy)
+    return PolicyIterationResult(values, policy, path, policy_iters, evaluation_iters_total)
+
+
+def q_learning_plan(
+    gw: GridWorld,
+    episodes: int = 500,
+    gamma: float = 0.9,
+    alpha: float = 0.1,
+    epsilon: float = 0.1,
+    epsilon_decay: float = 0.995,
+    min_epsilon: float = 0.01,
+    max_steps_per_episode: int = 200,
+    seed: Optional[int] = None,
+) -> QLearningResult:
+    rng = random.Random(seed)
+    q_values: DefaultDict[Tuple[Coord, str], float] = defaultdict(float)
+    episode_rewards: List[float] = []
+    states = _enumerate_states(gw)
+    for ep in range(episodes):
+        state = gw.start
+        total_reward = 0.0
+        for _ in range(max_steps_per_episode):
+            if gw.is_terminal(state):
+                break
+            if rng.random() < epsilon:
+                action = rng.choice(ACTION_ORDER)
+            else:
+                action = max(
+                    ACTION_ORDER,
+                    key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+                )
+            nxt, reward, done = _apply_action(gw, state, action)
+            best_next = 0.0
+            if not done:
+                best_next = max(q_values[(nxt, a)] for a in ACTION_ORDER)
+            old_q = q_values[(state, action)]
+            q_values[(state, action)] = (1 - alpha) * old_q + alpha * (reward + gamma * best_next)
+            state = nxt
+            total_reward += reward
+            if done:
+                break
+        episode_rewards.append(total_reward)
+        epsilon = max(min_epsilon, epsilon * epsilon_decay)
+    policy: Dict[Coord, Optional[str]] = {}
+    for state in states:
+        if gw.is_terminal(state):
+            policy[state] = None
+        else:
+            best_action = max(
+                ACTION_ORDER,
+                key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+            )
+            policy[state] = best_action
+    path = _rollout_policy(gw, policy)
+    return QLearningResult(dict(q_values), policy, path, episode_rewards, episodes)
+
+
 # ------------------ Part 1: Step-by-step search generators ------------------
-from dataclasses import dataclass
 
 @dataclass
 class SearchStep:
