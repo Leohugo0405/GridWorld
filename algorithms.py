@@ -202,19 +202,34 @@ def minimax_escape(
         dist_demon = manhattan(a, d) if d is not None else gw.w + gw.h
         return -10 * dist_goal + 3 * dist_demon
 
-    def minimax(agent: Coord, demon: Coord, remaining: int, maximizing: bool, alpha: float, beta: float, memo: Dict[Tuple[Coord, Coord, int, bool], int]) -> int:
+    def minimax(
+        agent: Coord,
+        demon: Coord,
+        remaining: int,
+        maximizing: bool,
+        alpha: float,
+        beta: float,
+        memo: Dict[Tuple[Coord, Coord, int, bool], Tuple[int, Optional[Coord]]],
+    ) -> Tuple[int, Optional[Coord]]:
         key = (agent, demon, remaining, maximizing)
         if key in memo:
             return memo[key]
         if agent == demon:
-            return LOSE_SCORE + remaining
+            val = LOSE_SCORE + remaining
+            memo[key] = (val, None)
+            return memo[key]
         if agent == start_goal:
-            return WIN_SCORE - remaining
+            val = WIN_SCORE - remaining
+            memo[key] = (val, None)
+            return memo[key]
         if remaining == 0:
-            return heuristic(agent, demon)
+            val = heuristic(agent, demon)
+            memo[key] = (val, None)
+            return memo[key]
 
         if maximizing:
             value = float('-inf')
+            best_move: Optional[Coord] = None
             moves = gw.neighbors4(agent)
             if not moves:
                 moves = [agent]
