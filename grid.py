@@ -1,6 +1,6 @@
 
 from typing import List, Tuple, Dict, Set, Optional
-import json, os
+import json, os, random
 
 Coord = Tuple[int, int]  # (col, row)
 
@@ -21,6 +21,7 @@ class GridWorld:
         self.step_cost = -1
         self.rewards = {'G': 20, '$': 10, 'B': -10}
         self._gold_taken: Set[Coord] = set()
+        self.demon: Optional[Coord] = None
 
     @staticmethod
     def from_json(path: str = 'map.json') -> "GridWorld":
@@ -64,3 +65,21 @@ class GridWorld:
         c, r = p
         res = [(c+1, r), (c-1, r), (c, r+1), (c, r-1)]
         return [q for q in res if self.in_bounds(q) and not self.is_wall(q)]
+
+    def randomize_demon(self, rng: Optional[random.Random] = None) -> Optional[Coord]:
+        """Place the demon on a random traversable tile (excluding start/goal)."""
+        rng = rng or random
+        candidates: List[Coord] = []
+        for r in range(self.h):
+            for c in range(self.w):
+                coord = (c, r)
+                if coord == self.start or coord == self.goal:
+                    continue
+                if self.is_wall(coord):
+                    continue
+                candidates.append(coord)
+        if not candidates:
+            self.demon = None
+        else:
+            self.demon = rng.choice(candidates)
+        return self.demon
