@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Tuple, Dict, List, Optional, Set, Mapping, DefaultDict
 import heapq, itertools, random
 from collections import defaultdict
+
 from dataclasses import dataclass, field
 
 from grid import GridWorld, Coord
@@ -234,69 +235,49 @@ def minimax_escape(
                 moves = [agent]
             for nxt in moves:
                 if nxt == demon:
-                    cand_val = LOSE_SCORE + remaining - 1
+                    cand = LOSE_SCORE + remaining - 1
                 else:
-                    cand_val, _ = minimax(
-                        nxt, demon, remaining - 1, False, alpha, beta, memo
-                    )
-                if cand_val > value:
-                    value = cand_val
-                    best_move = nxt
+                    cand = minimax(nxt, demon, remaining - 1, False, alpha, beta, memo)
+                value = max(value, cand)
                 alpha = max(alpha, value)
                 if alpha >= beta:
                     break
-            if best_move is None:
-                best_move = agent
-            memo[key] = (int(value), best_move)
+            memo[key] = int(value)
             return memo[key]
         else:
             value = float('inf')
-            best_reply: Optional[Coord] = None
             moves = gw.neighbors4(demon)
             if not moves:
                 moves = [demon]
             for nxt in moves:
                 if nxt == agent:
-                    cand_val = LOSE_SCORE + remaining - 1
+                    cand = LOSE_SCORE + remaining - 1
                 else:
-                    cand_val, _ = minimax(
-                        agent, nxt, remaining - 1, True, alpha, beta, memo
-                    )
-                if cand_val < value:
-                    value = cand_val
-                    best_reply = nxt
+                    cand = minimax(agent, nxt, remaining - 1, True, alpha, beta, memo)
+                value = min(value, cand)
                 beta = min(beta, value)
                 if alpha >= beta:
                     break
-            if best_reply is None:
-                best_reply = demon
-            memo[key] = (int(value), best_reply)
+            memo[key] = int(value)
             return memo[key]
 
-    def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord], Optional[Coord]]:
-        memo: Dict[Tuple[Coord, Coord, int, bool], Tuple[int, Optional[Coord]]] = {}
+    def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord]]:
+        memo: Dict[Tuple[Coord, Coord, int, bool], int] = {}
         best_val = float('-inf')
         best_move: Optional[Coord] = None
-        best_reply: Optional[Coord] = None
         moves = gw.neighbors4(agent)
         if not moves:
             moves = [agent]
         for nxt in moves:
             if nxt == demon:
-                cand_val = LOSE_SCORE + depth - 1
-                demon_reply = None
+                cand = LOSE_SCORE + depth - 1
             else:
-                cand_val, demon_reply = minimax(
-                    nxt, demon, depth - 1, False, float('-inf'), float('inf'), memo
-                )
+                cand = minimax(nxt, demon, depth - 1, False, float('-inf'), float('inf'), memo)
             prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
-            if cand_val > best_val or (cand_val == best_val and prefer):
-                best_val = cand_val
+            if cand > best_val or (cand == best_val and prefer):
+                best_val = cand
                 best_move = nxt
-                best_reply = demon_reply
-        return int(best_val), best_move, best_reply
-
-    visited_states: Set[Tuple[Coord, Optional[Coord]]] = {(agent_pos, demon_pos)}
+        return int(best_val), best_move
 
     for step in range(max_steps):
         if agent_pos == start_goal:
@@ -306,11 +287,7 @@ def minimax_escape(
             break
         if demon_pos is None:
             demon_path = []
-        score, move, demon_reply = (
-            choose_best(agent_pos, demon_pos)
-            if demon_pos is not None
-            else (WIN_SCORE, None, None)
-        )
+        score, move = choose_best(agent_pos, demon_pos) if demon_pos is not None else (WIN_SCORE, None)
         if opening_score is None:
             opening_score = score
         if move is None:
@@ -321,24 +298,16 @@ def minimax_escape(
             if agent_pos == demon_pos:
                 caught_step = step + 1
                 break
-            if demon_reply is None:
-                demon_moves = gw.neighbors4(demon_pos)
-                if not demon_moves:
-                    demon_moves = [demon_pos]
-                demon_pos = rng.choice(demon_moves)
-            else:
-                demon_pos = demon_reply
+            demon_moves = gw.neighbors4(demon_pos)
+            if not demon_moves:
+                demon_moves = [demon_pos]
+            demon_pos = rng.choice(demon_moves)
             demon_path.append(demon_pos)
             if agent_pos == demon_pos:
                 caught_step = step + 1
                 break
         if agent_pos == start_goal:
             break
-
-        state = (agent_pos, demon_pos)
-        if state in visited_states:
-            break
-        visited_states.add(state)
 
     success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
     final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos)
