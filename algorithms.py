@@ -419,8 +419,8 @@ class MinimaxEscapeResult:
 
 def minimax_escape(
         gw: GridWorld,
-        depth: int = 6,
-        max_steps: int = 80,
+        depth: int = 10,
+        max_steps: int = 1000,
         demon_start: Optional[Coord] = None,
         seed: Optional[int] = None,
 ) -> MinimaxEscapeResult:
@@ -460,8 +460,8 @@ def minimax_escape(
     caught_step: Optional[int] = None  # 被捕获的步数（初始为None表示未被捕获）
 
     # 评分常量定义
-    WIN_SCORE = 1000  # 到达目标的基础奖励分数
-    LOSE_SCORE = -1000  # 被恶魔捕获的基础惩罚分数
+    WIN_SCORE = 20  # 到达目标的基础奖励分数
+    LOSE_SCORE = -20  # 被恶魔捕获的基础惩罚分数
 
     def heuristic(a: Coord, d: Optional[Coord]) -> int:
         """
