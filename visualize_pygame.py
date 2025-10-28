@@ -5,6 +5,8 @@ from algorithms import (
     best_collect_all_golds_dp,
     dfs_search_steps, greedy_search_steps, astar_search_steps, SearchStep,
     minimax_escape, minimax_escape_expectimax, MinimaxEscapeResult,
+    value_iteration_plan, policy_iteration_plan, q_learning_plan,
+    ValueIterationResult, PolicyIterationResult, QLearningResult,
 )
 
 # ---- Layout & Colors ----
@@ -40,6 +42,9 @@ COL_SHADOW = (190, 190, 190)
 COL_FRONTIER = (255, 140, 0)
 COL_VISITED  = (120, 180, 255)
 COL_CURRENT  = (220, 60, 60)
+COL_VALUE_ITER = (100, 200, 100)
+COL_POLICY_ITER = (200, 100, 200)
+COL_QLEARNING = (200, 150, 50)
 
 globals_tiles: Dict[str, Optional[pygame.Surface]] = {}
 
@@ -195,7 +200,7 @@ class PathAnim:
             pygame.draw.circle(screen, self.color, head, 8)
 
 def reconstruct_to(parent, cur):
-    path: List[Tuple[int,int]] = []
+    path = []
     t = cur
     while t is not None and t in parent:
         path.append(t); t = parent[t]
@@ -209,7 +214,6 @@ class SearchAnimator:
     def reset(self):
         self.idx = 0
         self.timer = 0
-        # 不改变 self.play
 
     def update(self, dt):
         if not self.play or not self.steps: return
@@ -234,7 +238,6 @@ class SearchAnimator:
             pts = [cell_center(c,r) for (c,r) in reconstruct_to(st.parent, st.current)]
             draw_polyline(screen, pts, (0,0,0), 3)
 
-# 新增：使用 agent.png 的简单路径动画（用于 Collect-All）
 class AgentPathAnim:
     def __init__(self, gw, path, step_ms=160):
         self.gw = gw
@@ -349,6 +352,58 @@ class MinimaxAnimator:
             if upto_d >= 2:
                 draw_polyline(screen, self.demon_centers[:upto_d], (200, 60, 60), 3)
 
+# ---- RL/DP Policy Animation ----
+class PolicyPathAnim:
+    """动画器：用于值迭代、策略迭代、Q学习等基于策略的路径可视化"""
+    def __init__(self, gw, result, color=(100, 200, 100), step_ms=160):
+        self.gw = gw
+        self.result = result
+        self.path = result.path if result else []
+        self.centers = [cell_center(c, r) for (c, r) in self.path]
+        self.color = color
+        self.step_ms = step_ms
+        self.idx = 0
+        self.timer = 0
+        self.play = False
+        
+    def set_result(self, result, color=None):
+        """更新结果和路径"""
+        self.result = result
+        self.path = result.path if result else []
+        self.centers = [cell_center(c, r) for (c, r) in self.path]
+        if color is not None:
+            self.color = color
+        self.idx = 0
+        self.timer = 0
+        
+    def reset(self):
+        self.idx = 0
+        self.timer = 0
+        
+    def update(self, dt):
+        if not self.play or len(self.path) < 2:
+            return
+        self.timer += dt
+        while self.timer >= self.step_ms and self.idx < len(self.path) - 1:
+            self.timer -= self.step_ms
+            self.idx += 1
+            
+    def draw(self, screen):
+        if not self.centers:
+            return
+        # 绘制已经走过的路径
+        if len(self.centers) >= 2:
+            upto = max(2, self.idx + 1)
+            draw_polyline(screen, self.centers[:upto], self.color, 4)
+        # 绘制当前位置的智能体
+        cx, cy = self.centers[self.idx]
+        agent_img = globals_tiles.get('agent')
+        if agent_img is not None:
+            rect = agent_img.get_rect(center=(cx, cy))
+            screen.blit(agent_img, rect.topleft)
+        else:
+            pygame.draw.circle(screen, self.color, (cx, cy), CELL//3)
+
 # ---- App ----
 def main():
     # if len(sys.argv) < 2:
@@ -371,11 +426,21 @@ def main():
     steps_astar  = list(astar_search_steps(gw, gw.start, gw.goal))
     res2 = best_collect_all_golds_dp(gw)
     p_collect = res2.path
+    
+    # 预计算值迭代、策略迭代和Q学习
+    value_iter_result = value_iteration_plan(gw, gamma=0.9, theta=1e-4, max_iterations=1000)
+    policy_iter_result = policy_iteration_plan(gw, gamma=0.9, theta=1e-4, max_policy_iterations=100)
+    qlearning_result = q_learning_plan(gw, episodes=500, gamma=0.9, alpha=0.1, epsilon=0.1, seed=42)
 
     # 动画器：Collect-All 使用 AgentPathAnim
     anim_part2  = AgentPathAnim(gw, p_collect, step_ms=160)
     anim_search = SearchAnimator(steps_dfs, step_ms=120)
     anim_minimax = MinimaxAnimator(gw, None, step_ms=200)
+    
+    # 动画器：值迭代、策略迭代、Q学习
+    anim_value_iter = PolicyPathAnim(gw, value_iter_result, color=COL_VALUE_ITER, step_ms=160)
+    anim_policy_iter = PolicyPathAnim(gw, policy_iter_result, color=COL_POLICY_ITER, step_ms=160)
+    anim_qlearning = PolicyPathAnim(gw, qlearning_result, color=COL_QLEARNING, step_ms=160)
 
     rng = random.Random()
     minimax_result: Optional[MinimaxEscapeResult] = None
@@ -394,12 +459,18 @@ def main():
     MODE_SEARCH = 4
     MODE_COLLECT = 2
     MODE_MINIMAX = 6
+    MODE_VALUE_ITER = 7
+    MODE_POLICY_ITER = 8
+    MODE_QLEARNING = 9
     MODE = MODE_SEARCH
     is_playing = False
     def apply_play_state():
         anim_part2.play = is_playing
         anim_search.play = is_playing
         anim_minimax.play = is_playing
+        anim_value_iter.play = is_playing
+        anim_policy_iter.play = is_playing
+        anim_qlearning.play = is_playing
     def set_playing(state: bool):
         nonlocal is_playing
         is_playing = state
@@ -420,6 +491,9 @@ def main():
         MenuItem("Part1: Search",       lambda: set_mode(MODE_SEARCH)),
         MenuItem("Part2: Collect-All",  lambda: set_mode(MODE_COLLECT)),
         MenuItem("Part3: Minimax",      lambda: set_mode(MODE_MINIMAX)),
+        MenuItem("Part4: Value Iter",   lambda: set_mode(MODE_VALUE_ITER)),
+        MenuItem("Part5: Policy Iter",  lambda: set_mode(MODE_POLICY_ITER)),
+        MenuItem("Part6: Q-Learning",   lambda: set_mode(MODE_QLEARNING)),
     ]
     control_items = [
         MenuItem("Restart",    lambda: on_restart()),
@@ -427,10 +501,13 @@ def main():
         MenuItem("Speed +",    lambda: on_speed(+1)),
     ]
     algo_items = [
-        MenuItem("DFS",         lambda: set_algo("dfs")),
-        MenuItem("Greedy",      lambda: set_algo("greedy")),
-        MenuItem("A*",          lambda: set_algo("astar")),
-        MenuItem("Minimax",     lambda: set_algo("minimax")),
+        MenuItem("DFS",           lambda: set_algo("dfs")),
+        MenuItem("Greedy",        lambda: set_algo("greedy")),
+        MenuItem("A*",            lambda: set_algo("astar")),
+        MenuItem("Minimax",       lambda: set_algo("minimax")),
+        MenuItem("Value Iter",    lambda: set_algo("value_iter")),
+        MenuItem("Policy Iter",   lambda: set_algo("policy_iter")),
+        MenuItem("Q-Learning",    lambda: set_algo("qlearning")),
     ]
 
     dropdowns = [
@@ -464,6 +541,12 @@ def main():
         MODE = m
         if MODE == MODE_MINIMAX:
             anim_minimax.reset()
+        elif MODE == MODE_VALUE_ITER:
+            anim_value_iter.reset()
+        elif MODE == MODE_POLICY_ITER:
+            anim_policy_iter.reset()
+        elif MODE == MODE_QLEARNING:
+            anim_qlearning.reset()
         apply_play_state()
 
     def set_algo(name: str):
@@ -490,13 +573,28 @@ def main():
             MODE = MODE_MINIMAX
             recompute_minimax()
             anim_minimax.reset()
+        elif name == "value_iter":
+            MODE = MODE_VALUE_ITER
+            anim_value_iter.reset()
+        elif name == "policy_iter":
+            MODE = MODE_POLICY_ITER
+            anim_policy_iter.reset()
+        elif name == "qlearning":
+            MODE = MODE_QLEARNING
+            anim_qlearning.reset()
         apply_play_state()
 
     def on_play_pause():
         set_playing(not is_playing)
 
     def on_restart():
-        anim_part2.reset(); anim_search.reset(); recompute_minimax(); anim_minimax.reset()
+        anim_part2.reset()
+        anim_search.reset()
+        recompute_minimax()
+        anim_minimax.reset()
+        anim_value_iter.reset()
+        anim_policy_iter.reset()
+        anim_qlearning.reset()
         apply_play_state()
 
     def on_speed(delta: int):
@@ -504,6 +602,9 @@ def main():
         anim_part2.step_ms = max(40, anim_part2.step_ms + step)
         anim_search.step_ms = max(40, anim_search.step_ms + step)
         anim_minimax.step_ms = max(60, anim_minimax.step_ms + step)
+        anim_value_iter.step_ms = max(40, anim_value_iter.step_ms + step)
+        anim_policy_iter.step_ms = max(40, anim_policy_iter.step_ms + step)
+        anim_qlearning.step_ms = max(40, anim_qlearning.step_ms + step)
 
     # ---- Main loop ----
     clock = pygame.time.Clock()
@@ -531,6 +632,12 @@ def main():
             anim_part2.update(dt)
         elif MODE == MODE_MINIMAX:
             anim_minimax.update(dt)
+        elif MODE == MODE_VALUE_ITER:
+            anim_value_iter.update(dt)
+        elif MODE == MODE_POLICY_ITER:
+            anim_policy_iter.update(dt)
+        elif MODE == MODE_QLEARNING:
+            anim_qlearning.update(dt)
         else:
             anim_search.update(dt)
 
@@ -540,20 +647,50 @@ def main():
             anim_part2.draw(screen)
         elif MODE == MODE_MINIMAX:
             anim_minimax.draw(screen)
+        elif MODE == MODE_VALUE_ITER:
+            anim_value_iter.draw(screen)
+        elif MODE == MODE_POLICY_ITER:
+            anim_policy_iter.draw(screen)
+        elif MODE == MODE_QLEARNING:
+            anim_qlearning.draw(screen)
         else:
             anim_search.draw(screen)
 
         for d in dropdowns: d.draw(screen, font)
         play_button.draw(screen, font)
 
+        # 底部信息栏
         minimax_info = "N/A"
         if minimax_result:
             status = "Safe" if minimax_result.success else "Caught"
             minimax_info = f"{status} len={len(minimax_result.agent_path)}"
-        info = (
-            f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
-            f" | Minimax {minimax_info}"
-        )
+        
+        # 构建信息字符串
+        if MODE == MODE_VALUE_ITER:
+            info = (
+                f"Value Iteration: path_len={len(value_iter_result.path)} "
+                f"iterations={value_iter_result.iterations} "
+                f"converged={value_iter_result.converged}"
+            )
+        elif MODE == MODE_POLICY_ITER:
+            info = (
+                f"Policy Iteration: path_len={len(policy_iter_result.path)} "
+                f"policy_iters={policy_iter_result.policy_iterations} "
+                f"eval_iters={policy_iter_result.evaluation_iterations}"
+            )
+        elif MODE == MODE_QLEARNING:
+            avg_reward = sum(qlearning_result.episode_rewards[-100:]) / min(100, len(qlearning_result.episode_rewards)) if qlearning_result.episode_rewards else 0
+            info = (
+                f"Q-Learning: path_len={len(qlearning_result.path)} "
+                f"episodes={qlearning_result.episodes} "
+                f"avg_reward(last100)={avg_reward:.1f}"
+            )
+        else:
+            info = (
+                f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
+                f" | Minimax {minimax_info}"
+            )
+        
         txt = font.render(info, True, (60,60,60))
         screen.blit(txt, (PADDING, H - txt.get_height() - 10))
         pygame.display.flip()

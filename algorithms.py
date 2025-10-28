@@ -15,8 +15,8 @@ def manhattan(a, b):
 
     曼哈顿距离公式：|x1 - x2| + |y1 - y2|，常用于路径规划中的启发式函数。
     参数:
-        a: Coord - 第一个点坐标 (x, y)
-        b: Coord - 第二个点坐标 (x, y)
+        a - 第一个点坐标 (x, y)
+        b - 第二个点坐标 (x, y)
     返回值:
         int - 两点间的曼哈顿距离
     """
@@ -42,7 +42,7 @@ def reconstruct(parent, t):
     通过回溯目标点的父节点链，反向构建路径并反转得到正确顺序。
     参数:
         parent: Dict[Coord, Optional[Coord]] - 记录每个节点父节点的字典（起点父节点为None）
-        t: Coord - 目标点坐标
+        t - 目标点坐标
     返回值:
         List[Coord] - 从起点到目标点的坐标列表（顺序为起点→目标）
     """
@@ -72,8 +72,8 @@ def dfs_search_steps(gw, start, goal):
     生成器会逐步产出SearchStep对象，可用于动画演示搜索过程。
     参数:
         gw: GridWorld - 网格环境对象
-        start: Coord - 起点坐标
-        goal: Coord - 目标点坐标
+        start - 起点坐标
+        goal - 目标点坐标
     生成值:
         SearchStep - 包含当前搜索状态的快照对象
     """
@@ -117,8 +117,8 @@ def greedy_search_steps(gw, start, goal):
     可能陷入局部最优，但搜索速度快。生成器用于演示搜索过程。
     参数:
         gw: GridWorld - 网格环境对象
-        start: Coord - 起点坐标
-        goal: Coord - 目标点坐标
+        start - 起点坐标
+        goal - 目标点坐标
     生成值:
         SearchStep - 包含当前搜索状态的快照对象
     """
@@ -168,8 +168,8 @@ def astar_search_steps(gw, start, goal):
     保证找到最短路径。生成器用于演示搜索过程。
     参数:
         gw: GridWorld - 网格环境对象
-        start: Coord - 起点坐标
-        goal: Coord - 目标点坐标
+        start - 起点坐标
+        goal - 目标点坐标
     生成值:
         SearchStep - 包含当前搜索状态的快照对象
     """
@@ -222,8 +222,8 @@ def a_star(gw, start, goal):
     当前节点到目标的估计代价（h，使用曼哈顿距离），保证找到最短路径。
     参数:
         gw: GridWorld - 网格环境对象
-        start: Coord - 起点坐标
-        goal: Coord - 目标点坐标
+        start - 起点坐标
+        goal - 目标点坐标
     返回值:
         Optional[List[Coord]] - 最短路径坐标列表（起点→目标），无解时返回None
     """
@@ -260,8 +260,8 @@ def shortest_path(gw, s, t):
     作为A*算法的便捷调用接口，统一网格环境中的最短路径查询入口。
     参数:
         gw: GridWorld - 网格环境对象
-        s: Coord - 起点坐标
-        t: Coord - 目标点坐标
+        s - 起点坐标
+        t - 目标点坐标
     返回值:
         Optional[List[Coord]] - 最短路径列表，无解时返回None
     """
@@ -405,7 +405,7 @@ def best_collect_all_golds_then_exit(gw, max_perm = 7):
     return TrajectoryResult(best_path, best_score)
 
 # ------------------ Demon escape via minimax ------------------
-# ------------------ Demon escape via minimax ------------------
+
 @dataclass
 class MinimaxEscapeResult:
     """极小极大算法逃生模拟的结果数据类，存储逃生过程的关键信息"""
@@ -517,8 +517,8 @@ def minimax_escape_expectimax(
         return 2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step
     
     def expectimax(
-            agent: Coord,
-            demon: Coord,
+            agent,
+            demon,
             remaining: int,
             maximizing: bool,
             memo: Dict[Tuple[Coord, Coord, int, bool], float],
@@ -581,7 +581,7 @@ def minimax_escape_expectimax(
             memo[key] = value
             return value
     
-    def choose_best(agent: Coord, demon: Coord) -> Tuple[float, Optional[Coord]]:
+    def choose_best(agent, demon) -> Tuple[float, Optional[Coord]]:
         """选择智能体的最佳移动"""
         memo: Dict[Tuple[Coord, Coord, int, bool], float] = {}
         best_val = float('-inf')
@@ -755,7 +755,7 @@ def minimax_escape(
         综合考虑智能体到目标的距离（优先靠近目标）和到恶魔的距离（优先远离恶魔）。
 
         参数:
-            a: Coord - 智能体当前位置
+            a - 智能体当前位置
             d: Optional[Coord] - 恶魔当前位置（None表示无恶魔）
             step: int - 当前步数
         返回值:
@@ -773,8 +773,8 @@ def minimax_escape(
         return int(2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step)
 
     def minimax(
-            agent: Coord,
-            demon: Coord,
+            agent,
+            demon,
             remaining: int,
             maximizing: bool,
             alpha: float,
@@ -789,8 +789,8 @@ def minimax_escape(
         结合alpha-beta剪枝减少无效搜索分支，提升效率。
 
         参数:
-            agent: Coord - 智能体当前位置
-            demon: Coord - 恶魔当前位置
+            agent - 智能体当前位置
+            demon - 恶魔当前位置
             remaining: int - 剩余搜索深度（递归终止条件）
             maximizing: bool - 是否为最大化玩家回合（True：智能体，False：恶魔）
             alpha: float - alpha值（最大化玩家的当前最优值，用于剪枝）
@@ -875,13 +875,13 @@ def minimax_escape(
             memo[key] = int(value)
             return memo[key]
 
-    def choose_best(agent: Coord, demon: Coord) -> Tuple[float, Optional[Coord]]:
+    def choose_best(agent, demon) -> Tuple[float, Optional[Coord]]:
         """
         选择智能体的最佳移动方向：通过极小极大算法评估所有可能移动，选择评分最高的方向。
 
         参数:
-            agent: Coord - 智能体当前位置
-            demon: Coord - 恶魔当前位置
+            agent - 智能体当前位置
+            demon - 恶魔当前位置
         返回值:
             Tuple[int, Optional[Coord]] - (最佳移动的评分, 最佳移动坐标)
         """
@@ -974,8 +974,8 @@ def movement_cost(gw, from_p, to_p):
     基础移动代价为1，不同地形会附加额外代价，用于A*算法的路径成本评估。
     参数:
         gw: GridWorld - 网格世界环境对象（提供单元格类型查询）
-        from_p: Coord - 起始位置坐标
-        to_p: Coord - 目标位置坐标（主要根据此位置类型计算代价）
+        from_p - 起始位置坐标
+        to_p - 目标位置坐标（主要根据此位置类型计算代价）
     返回值:
         int - 总移动代价（基础代价+地形附加代价）
     """
@@ -1001,8 +1001,8 @@ def a_star_movement(gw, start, goal, avoid = None):
 
     参数:
         gw: GridWorld - 网格世界环境对象
-        start: Coord - 起点坐标
-        goal: Coord - 目标点坐标
+        start - 起点坐标
+        goal - 目标点坐标
         avoid: Optional[Set[Coord]] - 需要避开的坐标集合（目标点除外），默认为空集
     返回值:
         Tuple[Optional[List[Coord]], Optional[int]] -
@@ -1232,13 +1232,27 @@ def _enumerate_states(gw):
 
 
 def _apply_action(gw, state, action):
+    """
+    应用动作并返回下一个状态、奖励和是否结束。
+    注意：此函数用于MDP规划（值迭代/策略迭代/Q学习），
+    不考虑金币的重复收集问题，因此金币不给额外奖励。
+    """
     if gw.is_terminal(state):
         return state, 0, True
     dx, dy = ACTIONS[action]
     nxt = (state[0] + dx, state[1] + dy)
     if not gw.in_bounds(nxt) or gw.is_wall(nxt):
         return state, gw.wall_penalty, False
-    reward = gw.reward_for(nxt)
+    
+    # 简化的奖励函数：忽略金币奖励，避免循环
+    cell_type = gw.cell_type(nxt)
+    if cell_type == 'G':  # 目标
+        reward = 20
+    elif cell_type == 'B':  # 陷阱
+        reward = -10
+    else:  # 普通格子或金币（金币不给奖励，避免循环）
+        reward = -1
+    
     done = gw.is_terminal(nxt)
     return nxt, reward, done
 
@@ -1272,6 +1286,8 @@ def _best_action(
 def _rollout_policy(gw, policy, max_steps = 200):
     state = gw.start
     path: List[Coord] = [state]
+    visited_count: Dict[Coord, int] = {state: 1}
+    
     for _ in range(max_steps):
         action = policy.get(state)
         if action is None:
@@ -1279,8 +1295,16 @@ def _rollout_policy(gw, policy, max_steps = 200):
         nxt, _, done = _apply_action(gw, state, action)
         path.append(nxt)
         state = nxt
-        if done or nxt == path[-2]:
+        
+        # 检测是否到达终点
+        if done:
             break
+        
+        # 检测循环：如果访问某个位置超过3次，说明陷入循环
+        visited_count[nxt] = visited_count.get(nxt, 0) + 1
+        if visited_count[nxt] > 3:
+            break
+    
     return path
 
 

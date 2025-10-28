@@ -10,14 +10,6 @@ TILE_GOLD  = '$'
 TILE_GOAL  = 'G'
 TILE_START = 'S'
 
-
-
-
-
-
-
-
-
 class GridWorld:
     def __init__(self, width = 10, height = 10):
         self.w = width
