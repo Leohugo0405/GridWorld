@@ -9,7 +9,7 @@ from grid import GridWorld, Coord
 
 
 # ------------------ Utilities ------------------
-def manhattan(a: Coord, b: Coord) -> int:
+def manhattan(a, b):
     """
     计算两个坐标点之间的曼哈顿距离（网格中水平/垂直移动的步数总和）。
 
@@ -35,7 +35,7 @@ ACTIONS: Dict[str, Tuple[int, int]] = {
 ACTION_ORDER: List[str] = ['U', 'R', 'D', 'L']
 
 
-def reconstruct(parent: Dict[Coord, Optional[Coord]], t: Coord) -> List[Coord]:
+def reconstruct(parent, t):
     """
     根据父节点字典重构从起点到目标点的路径。
 
@@ -64,7 +64,7 @@ class SearchStep:
     parent: Dict[Coord, Optional[Coord]]  # 当前父节点映射关系
 
 
-def dfs_search_steps(gw: GridWorld, start: Coord, goal: Coord):
+def dfs_search_steps(gw, start, goal):
     """
     深度优先搜索(DFS)的分步执行生成器，每次迭代返回搜索过程快照。
 
@@ -109,7 +109,7 @@ def dfs_search_steps(gw: GridWorld, start: Coord, goal: Coord):
     yield SearchStep("DFS", goal if goal in parent else cur, list(stack), set(seen), dict(parent))
 
 
-def greedy_search_steps(gw: GridWorld, start: Coord, goal: Coord):
+def greedy_search_steps(gw, start, goal):
     """
     贪婪最佳优先搜索的分步执行生成器，每次迭代返回搜索过程快照。
 
@@ -159,7 +159,7 @@ def greedy_search_steps(gw: GridWorld, start: Coord, goal: Coord):
     yield SearchStep("Greedy", goal if goal in parent else cur, [c for _, c in pq], set(seen), dict(parent))
 
 
-def astar_search_steps(gw: GridWorld, start: Coord, goal: Coord):
+def astar_search_steps(gw, start, goal):
     """
     A*搜索的分步执行生成器，每次迭代返回搜索过程快照。
 
@@ -214,7 +214,7 @@ def astar_search_steps(gw: GridWorld, start: Coord, goal: Coord):
     yield SearchStep("A*", goal if goal in parent else cur, [c for _, c in openpq], set(seen), dict(parent))
 
 
-def a_star(gw: GridWorld, start: Coord, goal: Coord) -> Optional[List[Coord]]:
+def a_star(gw, start, goal):
     """
     A*路径搜索算法实现，寻找从起点到目标点的最短路径。
 
@@ -253,7 +253,7 @@ def a_star(gw: GridWorld, start: Coord, goal: Coord) -> Optional[List[Coord]]:
     return None  # 目标不可达，返回None
 
 
-def shortest_path(gw: GridWorld, s: Coord, t: Coord) -> Optional[List[Coord]]:
+def shortest_path(gw, s, t):
     """
     最短路径查询函数（A*算法封装）。
 
@@ -276,7 +276,7 @@ class TrajectoryResult:
     total_reward: int  # 该路径的总奖励值
 
 
-def total_reward_for_path(gw: GridWorld, path: List[Coord]) -> int:
+def total_reward_for_path(gw, path):
     """
     计算给定路径在网格环境中的总奖励值（基于预设奖励规则）。
 
@@ -317,7 +317,7 @@ def total_reward_for_path(gw: GridWorld, path: List[Coord]) -> int:
     return reward
 
 
-def best_collect_all_golds_then_exit(gw: GridWorld, max_perm: int = 7) -> TrajectoryResult:
+def best_collect_all_golds_then_exit(gw, max_perm = 7):
     """
     寻找收集所有金矿后到达终点的最优路径（基于奖励最大化）。
 
@@ -418,11 +418,11 @@ class MinimaxEscapeResult:
 
 
 def minimax_escape_expectimax(
-        gw: GridWorld,
-        depth: int = 10,
-        max_steps: int = 1000,
-        demon_start: Optional[Coord] = None,
-        seed: Optional[int] = None,
+        gw,
+        depth = 10,
+        max_steps = 1000,
+        demon_start = None,
+        seed = None,
 ) -> MinimaxEscapeResult:
     """
     使用Expectimax算法模拟智能体从随机移动魔鬼中逃生的过程。
@@ -461,7 +461,7 @@ def minimax_escape_expectimax(
     
     # 预计算到目标的距离表（BFS）
     from collections import deque
-    def build_goal_dist() -> Dict[Coord, int]:
+    def build_goal_dist():
         """使用BFS预计算所有位置到目标的最短距离"""
         INF = 10**6
         dist = {}
@@ -482,7 +482,7 @@ def minimax_escape_expectimax(
     # 使用缓存优化魔鬼距离计算
     demon_dist_cache: Dict[Coord, Dict[Coord, int]] = {}
     
-    def get_demon_dist(demon_pos: Coord) -> Dict[Coord, int]:
+    def get_demon_dist(demon_pos):
         """获取从魔鬼位置到所有位置的距离（带缓存）"""
         if demon_pos in demon_dist_cache:
             return demon_dist_cache[demon_pos]
@@ -503,7 +503,7 @@ def minimax_escape_expectimax(
         demon_dist_cache[demon_pos] = dist
         return dist
     
-    def heuristic(a: Coord, d: Optional[Coord], step: int) -> float:
+    def heuristic(a, d, step):
         """改进的启发式函数：使用BFS距离 + 步数惩罚"""
         if d is None:
             dist_demon = gw.w + gw.h
@@ -662,11 +662,11 @@ def minimax_escape_expectimax(
 
 
 def minimax_escape(
-        gw: GridWorld,
-        depth: int = 10,
-        max_steps: int = 1000,
-        demon_start: Optional[Coord] = None,
-        seed: Optional[int] = None,
+        gw,
+        depth = 10,
+        max_steps = 1000,
+        demon_start = None,
+        seed = None,
 ) -> MinimaxEscapeResult:
     """
     使用极小极大（Minimax）算法模拟智能体从恶魔追捕中逃生的过程。
@@ -709,7 +709,7 @@ def minimax_escape(
 
     # 预计算到目标的距离表（BFS）
     from collections import deque
-    def build_goal_dist() -> Dict[Coord, int]:
+    def build_goal_dist():
         """使用BFS预计算所有位置到目标的最短距离"""
         dist = {}
         q = deque([start_goal])
@@ -729,7 +729,7 @@ def minimax_escape(
     # 使用缓存优化魔鬼距离计算
     demon_dist_cache: Dict[Coord, Dict[Coord, int]] = {}
     
-    def get_demon_dist(demon_pos: Coord) -> Dict[Coord, int]:
+    def get_demon_dist(demon_pos):
         """获取从魔鬼位置到所有位置的距离（带缓存）"""
         if demon_pos in demon_dist_cache:
             return demon_dist_cache[demon_pos]
@@ -749,7 +749,7 @@ def minimax_escape(
         demon_dist_cache[demon_pos] = dist
         return dist
 
-    def heuristic(a: Coord, d: Optional[Coord], step: int) -> int:
+    def heuristic(a, d, step):
         """
         改进的启发函数：使用BFS距离 + 步数惩罚
         综合考虑智能体到目标的距离（优先靠近目标）和到恶魔的距离（优先远离恶魔）。
@@ -875,7 +875,7 @@ def minimax_escape(
             memo[key] = int(value)
             return memo[key]
 
-    def choose_best(agent: Coord, demon: Coord) -> Tuple[int, Optional[Coord]]:
+    def choose_best(agent: Coord, demon: Coord) -> Tuple[float, Optional[Coord]]:
         """
         选择智能体的最佳移动方向：通过极小极大算法评估所有可能移动，选择评分最高的方向。
 
@@ -907,29 +907,23 @@ def minimax_escape(
                 best_val = cand
                 best_move = nxt
 
-        return int(best_val), best_move
+        return best_val, best_move
 
-    # 主模拟循环：智能体与恶魔交替移动，直到达到终止条件
+    # 主模拟循环
     for step in range(max_steps):
-        # 终止条件1：智能体已到达目标
         if agent_pos == start_goal:
             break
-        # 终止条件2：智能体已被恶魔捕获（当前位置重叠）
         if demon_pos is not None and agent_pos == demon_pos:
             caught_step = step
             break
 
-        # 无恶魔时清空恶魔路径（边界情况处理）
         if demon_pos is None:
             demon_path = []
 
-        # 智能体决策：获取最佳移动（使用极小极大算法）
-        score, move = choose_best(agent_pos, demon_pos) if demon_pos is not None else (WIN_SCORE, None)
-        # 记录初始评分（首次决策的评估结果）
+        score, move = choose_best(agent_pos, demon_pos) if demon_pos is not None else (float(WIN_SCORE), None)
         if opening_score is None:
             opening_score = score
 
-        # 若无可移动方向（被完全包围），终止模拟
         if move is None:
             break
 
@@ -937,20 +931,16 @@ def minimax_escape(
         agent_prev = agent_path[-1] if len(agent_path) >= 1 else agent_pos
         demon_prev = demon_path[-1] if demon_path else demon_pos
         
-        # 执行智能体移动并更新路径
         agent_pos = move
         agent_path.append(agent_pos)
 
-        # 恶魔移动（仅当恶魔存在时）
         if demon_pos is not None:
-            # 检查移动后是否立即被捕获（智能体移动到恶魔位置）
             if agent_pos == demon_pos:
                 caught_step = step + 1
                 break
 
-            # 恶魔随机移动：获取所有可行方向并随机选择
             demon_moves = gw.neighbors4(demon_pos)
-            if not demon_moves:  # 无可行移动时原地不动
+            if not demon_moves:
                 demon_moves = [demon_pos]
             demon_next = rng.choice(demon_moves)
             
@@ -964,24 +954,20 @@ def minimax_escape(
             
             demon_path.append(demon_pos)
 
-            # 再次检查捕获（恶魔移动到智能体位置）
             if agent_pos == demon_pos:
                 caught_step = step + 1
                 break
 
-        # 再次检查是否到达目标（防止移动后未触发终止条件）
         if agent_pos == start_goal:
             break
 
-    # 计算逃生结果：智能体到达目标且未被捕获
     success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
-    # 最终评分：使用初始评分或启发函数评估（若未进行决策）
     final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos, len(agent_path))
     return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
 
 
 # --------- Movement-cost A* with optional gold avoidance (for DP) ---------
-def movement_cost(gw: GridWorld, from_p: Coord, to_p: Coord) -> int:
+def movement_cost(gw, from_p, to_p):
     """
     计算网格中从一个位置移动到另一个位置的代价（考虑地形类型）。
 
@@ -1006,7 +992,7 @@ def movement_cost(gw: GridWorld, from_p: Coord, to_p: Coord) -> int:
     return c
 
 
-def a_star_movement(gw: GridWorld, start: Coord, goal: Coord, avoid: Optional[Set[Coord]] = None):
+def a_star_movement(gw, start, goal, avoid = None):
     """
     带移动代价和避障功能的A*路径搜索算法。
 
@@ -1063,7 +1049,7 @@ def a_star_movement(gw: GridWorld, start: Coord, goal: Coord, avoid: Optional[Se
 
 
 # --------- DP over subsets (Held–Karp) for collect-all-golds ---------
-def best_collect_all_golds_dp(gw: GridWorld) -> TrajectoryResult:
+def best_collect_all_golds_dp(gw):
     """
     使用Held-Karp算法（子集动态规划）求解全金矿收集最优路径。
 
@@ -1093,7 +1079,7 @@ def best_collect_all_golds_dp(gw: GridWorld) -> TrajectoryResult:
     COST = {}  # COST[(a, b)]: 从a到b的最小移动代价
 
     # 辅助函数：预计算两点间的路径和代价（避开其他金矿）
-    def pair(a: Coord, b: Coord) -> None:
+    def pair(a, b):
         """
         预计算并缓存从a到b的路径和代价，避开除b外的其他金矿（防止提前收集）。
         若路径不存在，尝试放宽避障条件（不避开任何金矿）。
@@ -1234,7 +1220,7 @@ class QLearningResult:
     episodes: int
 
 
-def _enumerate_states(gw: GridWorld) -> List[Coord]:
+def _enumerate_states(gw):
     states: List[Coord] = []
     for r in range(gw.h):
         for c in range(gw.w):
@@ -1245,7 +1231,7 @@ def _enumerate_states(gw: GridWorld) -> List[Coord]:
     return states
 
 
-def _apply_action(gw: GridWorld, state: Coord, action: str) -> Tuple[Coord, int, bool]:
+def _apply_action(gw, state, action):
     if gw.is_terminal(state):
         return state, 0, True
     dx, dy = ACTIONS[action]
@@ -1258,11 +1244,8 @@ def _apply_action(gw: GridWorld, state: Coord, action: str) -> Tuple[Coord, int,
 
 
 def _best_action(
-    gw: GridWorld,
-    state: Coord,
-    values: Mapping[Coord, float],
-    gamma: float,
-) -> Tuple[Optional[str], float]:
+    gw, state, values, gamma
+):
     if gw.is_terminal(state):
         return None, 0.0
     best_action: Optional[str] = None
@@ -1286,7 +1269,7 @@ def _best_action(
     return best_action, best_value if best_value != float('-inf') else 0.0
 
 
-def _rollout_policy(gw: GridWorld, policy: Mapping[Coord, Optional[str]], max_steps: int = 200) -> List[Coord]:
+def _rollout_policy(gw, policy, max_steps = 200):
     state = gw.start
     path: List[Coord] = [state]
     for _ in range(max_steps):
@@ -1302,10 +1285,10 @@ def _rollout_policy(gw: GridWorld, policy: Mapping[Coord, Optional[str]], max_st
 
 
 def value_iteration_plan(
-    gw: GridWorld,
-    gamma: float = 0.9,
-    theta: float = 1e-4,
-    max_iterations: int = 1000,
+    gw,
+    gamma = 0.9,
+    theta = 1e-4,
+    max_iterations = 1000,
 ) -> ValueIterationResult:
     states = _enumerate_states(gw)
     values: Dict[Coord, float] = {s: 0.0 for s in states}
@@ -1332,10 +1315,10 @@ def value_iteration_plan(
 
 
 def policy_iteration_plan(
-    gw: GridWorld,
-    gamma: float = 0.9,
-    theta: float = 1e-4,
-    max_policy_iterations: int = 100,
+    gw,
+    gamma = 0.9,
+    theta = 1e-4,
+    max_policy_iterations = 100,
 ) -> PolicyIterationResult:
     states = _enumerate_states(gw)
     policy: Dict[Coord, Optional[str]] = {}
@@ -1377,15 +1360,15 @@ def policy_iteration_plan(
 
 
 def q_learning_plan(
-    gw: GridWorld,
-    episodes: int = 500,
-    gamma: float = 0.9,
-    alpha: float = 0.1,
-    epsilon: float = 0.1,
-    epsilon_decay: float = 0.995,
-    min_epsilon: float = 0.01,
-    max_steps_per_episode: int = 200,
-    seed: Optional[int] = None,
+    gw,
+    episodes = 500,
+    gamma = 0.9,
+    alpha = 0.1,
+    epsilon = 0.1,
+    epsilon_decay = 0.995,
+    min_epsilon = 0.01,
+    max_steps_per_episode = 200,
+    seed = None,
 ) -> QLearningResult:
     rng = random.Random(seed)
     q_values: DefaultDict[Tuple[Coord, str], float] = defaultdict(float)
@@ -1428,6 +1411,4 @@ def q_learning_plan(
             policy[state] = best_action
     path = _rollout_policy(gw, policy)
     return QLearningResult(dict(q_values), policy, path, episode_rewards, episodes)
-
-
 

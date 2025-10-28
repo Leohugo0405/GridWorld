@@ -43,12 +43,12 @@ COL_CURRENT  = (220, 60, 60)
 
 globals_tiles: Dict[str, Optional[pygame.Surface]] = {}
 
-def cell_center(c: int, r: int) -> Tuple[int,int]:
+def cell_center(c, r):
     x = PADDING + MARGIN + c*(CELL+MARGIN) + CELL//2
     y = MENU_H + PADDING + MARGIN + r*(CELL+MARGIN) + CELL//2
     return x, y
 
-def load_tile_images(cell_size: int) -> Dict[str, Optional[pygame.Surface]]:
+def load_tile_images(cell_size):
     names = {
         'S': 'start.png','G': 'goal.png','B': 'trap.png','$': 'gold.png',
         '#': 'wall.png','P': 'plain.png','agent': 'agent.png','demon': 'demon.png',
@@ -68,7 +68,7 @@ def load_tile_images(cell_size: int) -> Dict[str, Optional[pygame.Surface]]:
             imgs[key] = None
     return imgs
 
-def draw_grid(screen, gw: GridWorld, tiles: Dict[str, Optional[pygame.Surface]]):
+def draw_grid(screen, gw, tiles):
     screen.fill(COL_BG)
     pygame.draw.rect(screen, COL_BAR, pygame.Rect(0,0,screen.get_width(), MENU_H))
     pygame.draw.line(screen, COL_MENU_SEP, (0, MENU_H-1), (screen.get_width(), MENU_H-1))
@@ -101,13 +101,13 @@ def draw_grid(screen, gw: GridWorld, tiles: Dict[str, Optional[pygame.Surface]])
             rect = pygame.Rect(x + CELL//4, y + CELL//4, CELL//2, CELL//2)
             pygame.draw.rect(screen, (200, 60, 60), rect, border_radius=6)
 
-def draw_polyline(screen, pts: List[Tuple[int,int]], color, width=4):
+def draw_polyline(screen, pts, color, width=4):
     if len(pts) >= 2:
         pygame.draw.lines(screen, color, False, pts, width)
 
 # ---- Dropdown UI ----
 class MenuItem:
-    def __init__(self, label: str, action=None, toggle=False, get_state=None):
+    def __init__(self, label, action=None, toggle=False, get_state=None):
         self.label = label
         self.action = action          # callable()
         self.toggle = toggle          # 是否是开关项
@@ -115,7 +115,7 @@ class MenuItem:
         self.hover = False
 
 class Dropdown:
-    def __init__(self, rect: pygame.Rect, title: str, items: List[MenuItem]):
+    def __init__(self, rect, title, items):
         self.rect = rect
         self.title = title
         self.items = items
@@ -164,7 +164,7 @@ class Dropdown:
 
 # ---- Animations ----
 class PathAnim:
-    def __init__(self, path: Optional[List[Tuple[int,int]]], color=(0,0,0), width=5, step_ms=220):
+    def __init__(self, path, color=(0,0,0), width=5, step_ms=220):
         self.path = path or []
         self.color = color
         self.width = width
@@ -194,7 +194,7 @@ class PathAnim:
             head = self.centers[self.idx]
             pygame.draw.circle(screen, self.color, head, 8)
 
-def reconstruct_to(parent: Dict[Tuple[int,int], Optional[Tuple[int,int]]], cur: Tuple[int,int]):
+def reconstruct_to(parent, cur):
     path: List[Tuple[int,int]] = []
     t = cur
     while t is not None and t in parent:
@@ -202,7 +202,7 @@ def reconstruct_to(parent: Dict[Tuple[int,int], Optional[Tuple[int,int]]], cur: 
     return list(reversed(path))
 
 class SearchAnimator:
-    def __init__(self, steps: List[SearchStep], step_ms=120):
+    def __init__(self, steps, step_ms=120):
         self.steps = steps; self.idx = 0; self.timer = 0
         self.step_ms = step_ms; self.play = False  # 初始暂停
         self.algo = steps[0].algo if steps else ""
@@ -236,7 +236,7 @@ class SearchAnimator:
 
 # 新增：使用 agent.png 的简单路径动画（用于 Collect-All）
 class AgentPathAnim:
-    def __init__(self, gw: GridWorld, path: Optional[List[Tuple[int,int]]], step_ms=160):
+    def __init__(self, gw, path, step_ms=160):
         self.gw = gw
         self.path = path or []
         self.centers = [cell_center(c, r) for (c, r) in self.path]
@@ -282,7 +282,7 @@ class AgentPathAnim:
 
 # ---- Minimax escape animation ----
 class MinimaxAnimator:
-    def __init__(self, gw: GridWorld, result: Optional[MinimaxEscapeResult], step_ms=200):
+    def __init__(self, gw, result, step_ms=200):
         self.gw = gw
         self.step_ms = step_ms
         self.play = False
@@ -293,7 +293,7 @@ class MinimaxAnimator:
         self.timer = 0
         self.set_result(result)
 
-    def set_result(self, result: Optional[MinimaxEscapeResult]):
+    def set_result(self, result):
         self.result = result
         self.agent_centers = [cell_center(c, r) for (c, r) in (result.agent_path if result else [])]
         self.demon_centers = [cell_center(c, r) for (c, r) in (result.demon_path if result else [])]

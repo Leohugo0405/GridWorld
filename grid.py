@@ -1,18 +1,10 @@
-
 from typing import List, Tuple, Dict, Set, Optional
 import json, os, random
 
 Coord = Tuple[int, int]  # (col, row)
 
-TILE_PLAIN = 'P'
-TILE_WALL  = '#'
-TILE_TRAP  = 'B'
-TILE_GOLD  = '$'
-TILE_GOAL  = 'G'
-TILE_START = 'S'
-
 class GridWorld:
-    def __init__(self, width: int = 10, height: int = 10):
+    def __init__(self, width = 10, height = 10):
         self.w = width
         self.h = height
         self.cells: Dict[Coord, str] = {}
@@ -24,7 +16,7 @@ class GridWorld:
         self.demon: Optional[Coord] = None
 
     @staticmethod
-    def from_json(path: str = 'map.json') -> "GridWorld":
+    def from_json(path = 'map.json'):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         layout: List[List[str]] = data["layout"]
@@ -49,20 +41,20 @@ class GridWorld:
                     pass
         return g
 
-    def in_bounds(self, p: Coord) -> bool:
+    def in_bounds(self, p):
         c, r = p
         return 0 <= c < self.w and 0 <= r < self.h
 
-    def is_wall(self, p: Coord) -> bool:
+    def is_wall(self, p):
         return self.cells.get(p, TILE_PLAIN) == TILE_WALL
 
-    def cell_type(self, p: Coord) -> str:
+    def cell_type(self, p):
         if p == self.start: return TILE_START
         if p == self.goal:  return TILE_GOAL
         return self.cells.get(p, TILE_PLAIN)
 
     # --- Reward helpers -------------------------------------------------
-    def reward_for_type(self, t: str) -> int:
+    def reward_for_type(self, t):
         if t == TILE_GOAL:
             return 20
         if t == TILE_TRAP:
@@ -75,23 +67,23 @@ class GridWorld:
             return -5
         return -1
 
-    def reward_for(self, p: Coord) -> int:
+    def reward_for(self, p):
         """Return the instantaneous reward for moving into ``p``."""
         return self.reward_for_type(self.cell_type(p))
 
     @property
-    def wall_penalty(self) -> int:
+    def wall_penalty(self):
         return self.reward_for_type(TILE_WALL)
 
-    def is_terminal(self, p: Coord) -> bool:
+    def is_terminal(self, p):
         return self.cell_type(p) in (TILE_GOAL, TILE_TRAP)
 
-    def neighbors4(self, p: Coord) -> List[Coord]:
+    def neighbors4(self, p):
         c, r = p
         res = [(c+1, r), (c-1, r), (c, r+1), (c, r-1)]
         return [q for q in res if self.in_bounds(q) and not self.is_wall(q)]
 
-    def randomize_demon(self, rng: Optional[random.Random] = None) -> Optional[Coord]:
+    def randomize_demon(self, rng = None):
         """Place the demon on a random traversable tile (excluding start/goal)."""
         rng = rng or random
         candidates: List[Coord] = []
