@@ -417,6 +417,250 @@ class MinimaxEscapeResult:
     score: int  # 最终评分（基于极小极大算法的评估结果）
 
 
+def minimax_escape_expectimax(
+        gw: GridWorld,
+        depth: int = 10,
+        max_steps: int = 1000,
+        demon_start: Optional[Coord] = None,
+        seed: Optional[int] = None,
+) -> MinimaxEscapeResult:
+    """
+    使用Expectimax算法模拟智能体从随机移动魔鬼中逃生的过程。
+    
+    与minimax不同，Expectimax假设魔鬼是随机移动的（而非最优对抗），
+    因此在魔鬼回合计算所有可能移动的期望值，而非最坏情况。
+    这更符合魔鬼随机移动的实际行为。
+    
+    参数:
+        gw: GridWorld - 网格世界环境对象
+        depth: int - 搜索深度
+        max_steps: int - 最大模拟步数
+        demon_start: Optional[Coord] - 恶魔的初始位置
+        seed: Optional[int] - 随机数种子
+        
+    返回值:
+        MinimaxEscapeResult - 逃生结果
+    """
+    depth = max(1, depth)
+    rng = random.Random(seed)
+    start_agent = gw.start
+    start_goal = gw.goal
+    
+    demon_pos = demon_start if demon_start is not None else gw.demon
+    if demon_pos is None:
+        demon_pos = gw.randomize_demon(rng)
+    
+    agent_pos = start_agent
+    agent_path: List[Coord] = [agent_pos]
+    demon_path: List[Coord] = [demon_pos] if demon_pos is not None else []
+    opening_score: Optional[float] = None
+    caught_step: Optional[int] = None
+    
+    WIN_SCORE = 1000
+    LOSE_SCORE = -1000
+    
+    # 预计算到目标的距离表（BFS）
+    from collections import deque
+    def build_goal_dist() -> Dict[Coord, int]:
+        """使用BFS预计算所有位置到目标的最短距离"""
+        INF = 10**6
+        dist = {}
+        q = deque([start_goal])
+        dist[start_goal] = 0
+        
+        while q:
+            cur = q.popleft()
+            d = dist[cur]
+            for nb in gw.neighbors4(cur):
+                if nb not in dist:
+                    dist[nb] = d + 1
+                    q.append(nb)
+        return dist
+    
+    goal_dist = build_goal_dist()
+    
+    # 使用缓存优化魔鬼距离计算
+    demon_dist_cache: Dict[Coord, Dict[Coord, int]] = {}
+    
+    def get_demon_dist(demon_pos: Coord) -> Dict[Coord, int]:
+        """获取从魔鬼位置到所有位置的距离（带缓存）"""
+        if demon_pos in demon_dist_cache:
+            return demon_dist_cache[demon_pos]
+        
+        INF = 10**6
+        dist = {}
+        q = deque([demon_pos])
+        dist[demon_pos] = 0
+        
+        while q:
+            cur = q.popleft()
+            d = dist[cur]
+            for nb in gw.neighbors4(cur):
+                if nb not in dist:
+                    dist[nb] = d + 1
+                    q.append(nb)
+        
+        demon_dist_cache[demon_pos] = dist
+        return dist
+    
+    def heuristic(a: Coord, d: Optional[Coord], step: int) -> float:
+        """改进的启发式函数：使用BFS距离 + 步数惩罚"""
+        if d is None:
+            dist_demon = gw.w + gw.h
+        else:
+            demon_dists = get_demon_dist(d)
+            dist_demon = demon_dists.get(a, gw.w + gw.h)
+        
+        dist_goal = goal_dist.get(a, gw.w + gw.h)
+        
+        # 启发式：远离魔鬼 + 靠近目标 - 步数惩罚
+        return 2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step
+    
+    def expectimax(
+            agent: Coord,
+            demon: Coord,
+            remaining: int,
+            maximizing: bool,
+            memo: Dict[Tuple[Coord, Coord, int, bool], float],
+    ) -> float:
+        """
+        Expectimax算法：智能体最大化，魔鬼取期望值（所有移动的平均）
+        """
+        key = (agent, demon, remaining, maximizing)
+        if key in memo:
+            return memo[key]
+        
+        current_step = depth - remaining + len(agent_path)
+        
+        # 终止条件
+        if agent == demon:
+            memo[key] = float(LOSE_SCORE + 0.1 * current_step)
+            return memo[key]
+        
+        if agent == start_goal:
+            memo[key] = float(WIN_SCORE - 0.1 * current_step)
+            return memo[key]
+        
+        if remaining == 0:
+            memo[key] = heuristic(agent, demon, current_step)
+            return memo[key]
+        
+        # 智能体回合：最大化
+        if maximizing:
+            value = float('-inf')
+            moves = gw.neighbors4(agent)
+            if not moves:
+                moves = [agent]
+            
+            for nxt in moves:
+                if nxt == demon:
+                    cand = float(LOSE_SCORE + remaining - 1)
+                else:
+                    cand = expectimax(nxt, demon, remaining - 1, False, memo)
+                value = max(value, cand)
+            
+            memo[key] = value
+            return value
+        
+        # 魔鬼回合：取期望值（随机移动）
+        else:
+            moves = gw.neighbors4(demon)
+            if not moves:
+                moves = [demon]
+            
+            # 计算所有可能移动的平均值
+            total = 0.0
+            for nxt in moves:
+                if nxt == agent:
+                    cand = float(LOSE_SCORE + remaining - 1)
+                else:
+                    cand = expectimax(agent, nxt, remaining - 1, True, memo)
+                total += cand
+            
+            value = total / len(moves)
+            memo[key] = value
+            return value
+    
+    def choose_best(agent: Coord, demon: Coord) -> Tuple[float, Optional[Coord]]:
+        """选择智能体的最佳移动"""
+        memo: Dict[Tuple[Coord, Coord, int, bool], float] = {}
+        best_val = float('-inf')
+        best_move: Optional[Coord] = None
+        
+        moves = gw.neighbors4(agent)
+        if not moves:
+            moves = [agent]
+        
+        for nxt in moves:
+            if nxt == demon:
+                cand = float(LOSE_SCORE + depth - 1)
+            else:
+                cand = expectimax(nxt, demon, depth - 1, False, memo)
+            
+            prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
+            if cand > best_val or (cand == best_val and prefer):
+                best_val = cand
+                best_move = nxt
+        
+        return best_val, best_move
+    
+    # 主模拟循环
+    for step in range(max_steps):
+        if agent_pos == start_goal:
+            break
+        if demon_pos is not None and agent_pos == demon_pos:
+            caught_step = step
+            break
+        
+        if demon_pos is None:
+            demon_path = []
+        
+        score, move = choose_best(agent_pos, demon_pos) if demon_pos is not None else (float(WIN_SCORE), None)
+        if opening_score is None:
+            opening_score = score
+        
+        if move is None:
+            break
+        
+        # 记录移动前的位置
+        agent_prev = agent_path[-1] if len(agent_path) >= 1 else agent_pos
+        demon_prev = demon_path[-1] if demon_path else demon_pos
+        
+        agent_pos = move
+        agent_path.append(agent_pos)
+        
+        if demon_pos is not None:
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+            
+            demon_moves = gw.neighbors4(demon_pos)
+            if not demon_moves:
+                demon_moves = [demon_pos]
+            demon_next = rng.choice(demon_moves)
+            
+            # 检测交叉移动（对穿）：智能体和魔鬼互换位置
+            # 如果智能体从A移到B，魔鬼从B移到A，则取消魔鬼的移动
+            if agent_prev == demon_next and demon_prev == agent_pos:
+                # 检测到对穿，魔鬼原地不动
+                demon_pos = demon_prev
+            else:
+                demon_pos = demon_next
+            
+            demon_path.append(demon_pos)
+            
+            if agent_pos == demon_pos:
+                caught_step = step + 1
+                break
+        
+        if agent_pos == start_goal:
+            break
+    
+    success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
+    final_score = int(opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos))
+    return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
+
+
 def minimax_escape(
         gw: GridWorld,
         depth: int = 10,
@@ -460,25 +704,73 @@ def minimax_escape(
     caught_step: Optional[int] = None  # 被捕获的步数（初始为None表示未被捕获）
 
     # 评分常量定义
-    WIN_SCORE = 20  # 到达目标的基础奖励分数
-    LOSE_SCORE = -20  # 被恶魔捕获的基础惩罚分数
+    WIN_SCORE = 1000  # 到达目标的基础奖励分数
+    LOSE_SCORE = -1000  # 被恶魔捕获的基础惩罚分数
 
-    def heuristic(a: Coord, d: Optional[Coord]) -> int:
+    # 预计算到目标的距离表（BFS）
+    from collections import deque
+    def build_goal_dist() -> Dict[Coord, int]:
+        """使用BFS预计算所有位置到目标的最短距离"""
+        dist = {}
+        q = deque([start_goal])
+        dist[start_goal] = 0
+        
+        while q:
+            cur = q.popleft()
+            d = dist[cur]
+            for nb in gw.neighbors4(cur):
+                if nb not in dist:
+                    dist[nb] = d + 1
+                    q.append(nb)
+        return dist
+    
+    goal_dist = build_goal_dist()
+    
+    # 使用缓存优化魔鬼距离计算
+    demon_dist_cache: Dict[Coord, Dict[Coord, int]] = {}
+    
+    def get_demon_dist(demon_pos: Coord) -> Dict[Coord, int]:
+        """获取从魔鬼位置到所有位置的距离（带缓存）"""
+        if demon_pos in demon_dist_cache:
+            return demon_dist_cache[demon_pos]
+        
+        dist = {}
+        q = deque([demon_pos])
+        dist[demon_pos] = 0
+        
+        while q:
+            cur = q.popleft()
+            d = dist[cur]
+            for nb in gw.neighbors4(cur):
+                if nb not in dist:
+                    dist[nb] = d + 1
+                    q.append(nb)
+        
+        demon_dist_cache[demon_pos] = dist
+        return dist
+
+    def heuristic(a: Coord, d: Optional[Coord], step: int) -> int:
         """
-        启发函数：在搜索深度耗尽时评估当前状态的优劣。
+        改进的启发函数：使用BFS距离 + 步数惩罚
         综合考虑智能体到目标的距离（优先靠近目标）和到恶魔的距离（优先远离恶魔）。
 
         参数:
             a: Coord - 智能体当前位置
             d: Optional[Coord] - 恶魔当前位置（None表示无恶魔）
+            step: int - 当前步数
         返回值:
             int - 状态评估分数（越高表示状态越优）
         """
-        dist_goal = manhattan(a, start_goal)  # 智能体到目标的曼哈顿距离
-        # 恶魔距离：存在时为曼哈顿距离，否则为网格对角线长度（视为安全）
-        dist_demon = manhattan(a, d) if d is not None else gw.w + gw.h
-        # 评分公式：-10*目标距离（靠近目标加分） + 3*恶魔距离（远离恶魔加分）
-        return -10 * dist_goal + 3 * dist_demon
+        if d is None:
+            dist_demon = gw.w + gw.h
+        else:
+            demon_dists = get_demon_dist(d)
+            dist_demon = demon_dists.get(a, gw.w + gw.h)
+        
+        dist_goal = goal_dist.get(a, gw.w + gw.h)
+        
+        # 启发式：远离魔鬼 + 靠近目标 - 步数惩罚
+        return int(2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step)
 
     def minimax(
             agent: Coord,
@@ -513,21 +805,23 @@ def minimax_escape(
         if key in memo:
             return memo[key]
 
-        # 基础情况1：智能体被恶魔捕获 → 返回失败分数（剩余步数越多，惩罚越小）
+        current_step = depth - remaining + len(agent_path)
+        
+        # 基础情况1：智能体被恶魔捕获 → 返回失败分数
         if agent == demon:
-            val = LOSE_SCORE + remaining  # 例：剩余3步被捕获 → -1000 + 3 = -997
+            val = LOSE_SCORE + int(0.1 * current_step)
             memo[key] = int(val)
             return memo[key]
 
-        # 基础情况2：智能体到达目标 → 返回胜利分数（剩余步数越少，奖励越大）
+        # 基础情况2：智能体到达目标 → 返回胜利分数
         if agent == start_goal:
-            val = WIN_SCORE - remaining  # 例：剩余2步到达 → 1000 - 2 = 998
+            val = WIN_SCORE - int(0.1 * current_step)
             memo[key] = int(val)
             return memo[key]
 
         # 基础情况3：搜索深度耗尽 → 使用启发函数评估当前状态
         if remaining == 0:
-            val = heuristic(agent, demon)
+            val = heuristic(agent, demon, current_step)
             memo[key] = int(val)
             return memo[key]
 
@@ -639,6 +933,10 @@ def minimax_escape(
         if move is None:
             break
 
+        # 记录移动前的位置
+        agent_prev = agent_path[-1] if len(agent_path) >= 1 else agent_pos
+        demon_prev = demon_path[-1] if demon_path else demon_pos
+        
         # 执行智能体移动并更新路径
         agent_pos = move
         agent_path.append(agent_pos)
@@ -654,7 +952,16 @@ def minimax_escape(
             demon_moves = gw.neighbors4(demon_pos)
             if not demon_moves:  # 无可行移动时原地不动
                 demon_moves = [demon_pos]
-            demon_pos = rng.choice(demon_moves)
+            demon_next = rng.choice(demon_moves)
+            
+            # 检测交叉移动（对穿）：智能体和魔鬼互换位置
+            # 如果智能体从A移到B，魔鬼从B移到A，则取消魔鬼的移动
+            if agent_prev == demon_next and demon_prev == agent_pos:
+                # 检测到对穿，魔鬼原地不动
+                demon_pos = demon_prev
+            else:
+                demon_pos = demon_next
+            
             demon_path.append(demon_pos)
 
             # 再次检查捕获（恶魔移动到智能体位置）
@@ -669,7 +976,7 @@ def minimax_escape(
     # 计算逃生结果：智能体到达目标且未被捕获
     success = agent_path[-1] == start_goal and (demon_pos is None or agent_path[-1] != demon_pos)
     # 最终评分：使用初始评分或启发函数评估（若未进行决策）
-    final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos)
+    final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos, len(agent_path))
     return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
 
 

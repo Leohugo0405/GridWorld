@@ -4,7 +4,7 @@ from grid import GridWorld
 from algorithms import (
     best_collect_all_golds_dp,
     dfs_search_steps, greedy_search_steps, astar_search_steps, SearchStep,
-    minimax_escape, MinimaxEscapeResult,
+    minimax_escape, minimax_escape_expectimax, MinimaxEscapeResult,
 )
 
 # ---- Layout & Colors ----
@@ -384,7 +384,8 @@ def main():
         nonlocal minimax_result
         gw.randomize_demon(rng)
         seed = rng.randrange(10**9)
-        minimax_result = minimax_escape(gw, depth=6, max_steps=80, demon_start=gw.demon, seed=seed)
+        # 使用 Expectimax 算法（更适合随机移动的魔鬼）
+        minimax_result = minimax_escape_expectimax(gw, depth=15, max_steps=1000, demon_start=gw.demon, seed=seed)
         anim_minimax.set_result(minimax_result)
 
     recompute_minimax()
