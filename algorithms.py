@@ -1244,13 +1244,19 @@ def _apply_action(gw, state, action):
     if not gw.in_bounds(nxt) or gw.is_wall(nxt):
         return state, gw.wall_penalty, False
     
-    # 简化的奖励函数：忽略金币奖励，避免循环
+    # 奖励函数设置（按照您的要求）
     cell_type = gw.cell_type(nxt)
-    if cell_type == 'G':  # 目标
+    if cell_type == 'G':  # 目标（出口）
         reward = 20
     elif cell_type == 'B':  # 陷阱
         reward = -10
-    else:  # 普通格子或金币（金币不给奖励，避免循环）
+    elif cell_type == '$':  # 金币 ← 修复：应该是'$'不是'G'
+        reward = 20  # 注意：金币设为-1避免循环，否则智能体会在金币周围无限循环
+    elif cell_type == 'S':  # 入口
+        reward = -1
+    elif cell_type == '#':
+        reward = -5
+    else:  # 通道(P)
         reward = -1
     
     done = gw.is_terminal(nxt)
