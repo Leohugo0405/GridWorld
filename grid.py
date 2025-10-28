@@ -3,6 +3,21 @@ import json, os, random
 
 Coord = Tuple[int, int]  # (col, row)
 
+TILE_PLAIN = 'P'
+TILE_WALL  = '#'
+TILE_TRAP  = 'B'
+TILE_GOLD  = '$'
+TILE_GOAL  = 'G'
+TILE_START = 'S'
+
+
+
+
+
+
+
+
+
 class GridWorld:
     def __init__(self, width = 10, height = 10):
         self.w = width
