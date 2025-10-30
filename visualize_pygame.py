@@ -504,10 +504,6 @@ def main():
         MenuItem("DFS",           lambda: set_algo("dfs")),
         MenuItem("Greedy",        lambda: set_algo("greedy")),
         MenuItem("A*",            lambda: set_algo("astar")),
-        MenuItem("Minimax",       lambda: set_algo("minimax")),
-        MenuItem("Value Iter",    lambda: set_algo("value_iter")),
-        MenuItem("Policy Iter",   lambda: set_algo("policy_iter")),
-        MenuItem("Q-Learning",    lambda: set_algo("qlearning")),
     ]
 
     dropdowns = [
@@ -516,9 +512,9 @@ def main():
         Dropdown(algo_rect, "Algorithm", algo_items),
     ]
 
-    # 简易按钮（开始/暂停）
+    # 按钮（开始/暂停）
     class Button:
-        def __init__(self, rect: pygame.Rect, label: str, on_click, get_state=None):
+        def __init__(self, rect, label, on_click, get_state=None):
             self.rect = rect; self.label = label; self.on_click = on_click; self.get_state = get_state
         def draw(self, screen, font):
             active = self.get_state() if self.get_state else False
@@ -527,7 +523,7 @@ def main():
             pygame.draw.rect(screen, COL_MENU_SEP, self.rect, width=1, border_radius=6)
             txt = font.render(self.label, True, COL_TEXT)
             screen.blit(txt, (self.rect.x+10, self.rect.y + (self.rect.h-txt.get_height())//2))
-        def handle_click(self, pos) -> bool:
+        def handle_click(self, pos):
             if self.rect.collidepoint(pos):
                 if self.on_click: self.on_click()
                 return True
@@ -536,7 +532,7 @@ def main():
     play_button = Button(pause_rect, "Start/Pause", lambda: on_play_pause(), get_state=lambda: is_playing)
 
     # ---- 菜单回调 ----
-    def set_mode(m: int):
+    def set_mode(m):
         nonlocal MODE
         MODE = m
         if MODE == MODE_MINIMAX:
@@ -549,7 +545,7 @@ def main():
             anim_qlearning.reset()
         apply_play_state()
 
-    def set_algo(name: str):
+    def set_algo(name):
         nonlocal MODE
         if name == "dfs":
             MODE = MODE_SEARCH
@@ -597,7 +593,7 @@ def main():
         anim_qlearning.reset()
         apply_play_state()
 
-    def on_speed(delta: int):
+    def on_speed(delta):
         step = -20 if delta>0 else +20
         anim_part2.step_ms = max(40, anim_part2.step_ms + step)
         anim_search.step_ms = max(40, anim_search.step_ms + step)

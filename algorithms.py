@@ -8,6 +8,17 @@ from dataclasses import dataclass, field
 from grid import GridWorld, Coord
 
 
+# ---- Global action definitions (used by MDP/RL and transition function) ----
+ACTIONS = {
+    'R': (1, 0),
+    'L': (-1, 0),
+    'D': (0, 1),
+    'U': (0, -1),
+}
+# Tie-breaking order for planning/RL; also used when enumerating actions
+ACTION_ORDER = ['R', 'D', 'L', 'U']
+
+
 # ------------------ Utilities ------------------
 def manhattan(a, b):
     """
@@ -22,35 +33,50 @@ def manhattan(a, b):
     """
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-
-# 动作集合：键为动作名称，值为(x, y)方向偏移量
-# 注意：网格坐标系中通常向下为y轴正方向，因此'U'对应y-1，'D'对应y+1
-ACTIONS: Dict[str, Tuple[int, int]] = {
-    'U': (0, -1),  # 上移：y坐标减1
-    'R': (1, 0),  # 右移：x坐标加1
-    'D': (0, 1),  # 下移：y坐标加1
-    'L': (-1, 0),  # 左移：x坐标减1
-}
-# 动作优先级顺序：用于需要固定动作遍历顺序的场景（如策略迭代）
-ACTION_ORDER: List[str] = ['U', 'R', 'D', 'L']
-
-
-def reconstruct(parent, t):
+# 新增：路径重构（按父指针回溯）
+def reconstruct(parent, cur):
     """
-    根据父节点字典重构从起点到目标点的路径。
-
-    通过回溯目标点的父节点链，反向构建路径并反转得到正确顺序。
-    参数:
-        parent: Dict[Coord, Optional[Coord]] - 记录每个节点父节点的字典（起点父节点为None）
-        t - 目标点坐标
-    返回值:
-        List[Coord] - 从起点到目标点的坐标列表（顺序为起点→目标）
+    根据 A* 等搜索中维护的 parent 字典，从 cur 回溯得到完整路径。
+    parent[start] 应为 None。
     """
     path = []
-    while t is not None:
-        path.append(t)  # 从目标点回溯至起点
+    t = cur
+    while t is not None and t in parent:
+        path.append(t)
         t = parent[t]
-    return list(reversed(path))  # 反转得到起点→目标的路径
+    return list(reversed(path)) if path else []
+
+# 新增：基于 BFS 的最短步数距离（缓存到指定目标）
+_goal_steps_cache: Dict[Tuple[int, Coord], Dict[Coord, int]] = {}
+
+def goal_steps_map(gw, goal):
+    """
+    返回从任意格到 goal 的最短步数距离表（BFS），带缓存。
+    """
+    key = (id(gw), goal)
+    if key in _goal_steps_cache:
+        return _goal_steps_cache[key]
+    from collections import deque
+    dist: Dict[Coord, int] = {goal: 0}
+    q = deque([goal])
+    while q:
+        cur = q.popleft()
+        d = dist[cur]
+        for nb in gw.neighbors4(cur):
+            if nb not in dist:
+                dist[nb] = d + 1
+                q.append(nb)
+    _goal_steps_cache[key] = dist
+    return dist
+
+def grid_steps_dist(gw, a, b):
+    """
+    返回 a 到 b 的最短步数距离（不可达时返回一个大值）。
+    """
+    if b is None:
+        return gw.w + gw.h
+    dist_map = goal_steps_map(gw, b)
+    return dist_map.get(a, gw.w + gw.h)
 
 
 # ------------------ Part 1: Step-by-step search generators ------------------
@@ -122,11 +148,11 @@ def greedy_search_steps(gw, start, goal):
     生成值:
         SearchStep - 包含当前搜索状态的快照对象
     """
-    # 优先队列：(优先级, 节点)，优先级为到目标的曼哈顿距离（越小越优先）
+    # 优先队列：(优先级, 节点)，优先级改为到目标的最短步数距离（BFS）
     pq: List[Tuple[int, Coord]] = []
-    heapq.heappush(pq, (manhattan(start, goal), start))
-    parent: Dict[Coord, Optional[Coord]] = {start: None}  # 父节点记录
-    seen: Set[Coord] = set()  # 已访问节点集合
+    heapq.heappush(pq, (grid_steps_dist(gw, start, goal), start))
+    parent: Dict[Coord, Optional[Coord]] = {start: None}
+    seen: Set[Coord] = set()
 
     # 初始状态快照
     yield SearchStep("Greedy", None, [start], set(), dict(parent))
@@ -150,7 +176,7 @@ def greedy_search_steps(gw, start, goal):
             if nb not in parent:  # 未被发现的节点
                 parent[nb] = cur
                 # 按到目标的距离设置优先级并入队
-                heapq.heappush(pq, (manhattan(nb, goal), nb))
+                heapq.heappush(pq, (grid_steps_dist(gw, nb, goal), nb))
                 # 更新前沿队列并产出快照
                 frontier_list = [c for _, c in pq]
                 yield SearchStep("Greedy", cur, frontier_list, set(seen), dict(parent))
@@ -176,7 +202,8 @@ def astar_search_steps(gw, start, goal):
     openpq: List[Tuple[int, Coord]] = []  # A*优先队列：(f值, 节点)
     gcost: Dict[Coord, int] = {start: 0}  # 起点到各节点的实际代价（g值）
     parent: Dict[Coord, Optional[Coord]] = {start: None}  # 父节点记录
-    heapq.heappush(openpq, (manhattan(start, goal), start))  # 初始节点入队
+    goal_map = goal_steps_map(gw, goal)
+    heapq.heappush(openpq, (goal_map.get(start, gw.w + gw.h), start))  # 初始节点入队
     seen: Set[Coord] = set()  # 已访问节点集合
 
     # 初始状态快照
@@ -203,7 +230,7 @@ def astar_search_steps(gw, start, goal):
             if nb not in gcost or ng < gcost[nb]:
                 gcost[nb] = ng  # 更新实际代价
                 parent[nb] = cur  # 更新父节点
-                f = ng + manhattan(nb, goal)  # 计算f值（g+h）
+                f = ng + goal_map.get(nb, gw.w + gw.h)  # 计算f值（g+h）
                 heapq.heappush(openpq, (f, nb))  # 入队
 
                 # 更新前沿队列并产出快照
@@ -230,9 +257,8 @@ def a_star(gw, start, goal):
     openpq: List[Tuple[int, Coord]] = []  # 优先队列：(f值, 节点)
     gcost: Dict[Coord, int] = {start: 0}  # 实际代价字典（g值）
     parent: Dict[Coord, Optional[Coord]] = {start: None}  # 父节点映射
-
-    # 初始节点入队（f值=h值，因g值=0）
-    heapq.heappush(openpq, (manhattan(start, goal), start))
+    goal_map = goal_steps_map(gw, goal)
+    heapq.heappush(openpq, (goal_map.get(start, gw.w + gw.h), start))
 
     while openpq:
         _, cur = heapq.heappop(openpq)  # 选择f值最小的节点
@@ -247,7 +273,7 @@ def a_star(gw, start, goal):
             if nb not in gcost or ng < gcost[nb]:
                 gcost[nb] = ng  # 更新g值
                 parent[nb] = cur  # 记录父节点
-                f = ng + manhattan(nb, goal)  # 计算f值
+                f = ng + goal_map.get(nb, gw.w + gw.h)  # 计算f值
                 heapq.heappush(openpq, (f, nb))  # 入队
 
     return None  # 目标不可达，返回None
@@ -383,8 +409,8 @@ def best_collect_all_golds_then_exit(gw, max_perm = 7):
 
         # 逐个收集剩余金矿
         while remaining:
-            # 选择当前位置最近的金矿（启发式：10 - 曼哈顿距离）
-            target = max(remaining, key=lambda z: (10 - manhattan(cur, z)))
+            # 使用最短步数距离选择最近的金矿
+            target = min(remaining, key=lambda z: grid_steps_dist(gw, cur, z))
             # 获取当前位置到目标金矿的路径
             seg = sp_cache.get((cur, target)) or shortest_path(gw, cur, target) or []
 
@@ -423,7 +449,7 @@ def minimax_escape_expectimax(
         max_steps = 1000,
         demon_start = None,
         seed = None,
-) -> MinimaxEscapeResult:
+):
     """
     使用Expectimax算法模拟智能体从随机移动魔鬼中逃生的过程。
     
@@ -514,15 +540,9 @@ def minimax_escape_expectimax(
         dist_goal = goal_dist.get(a, gw.w + gw.h)
         
         # 启发式：远离魔鬼 + 靠近目标 - 步数惩罚
-        return 2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step
-    
-    def expectimax(
-            agent,
-            demon,
-            remaining: int,
-            maximizing: bool,
-            memo: Dict[Tuple[Coord, Coord, int, bool], float],
-    ) -> float:
+        return int(2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step)
+
+    def expectimax(agent, demon, remaining, maximizing, memo):
         """
         Expectimax算法：智能体最大化，魔鬼取期望值（所有移动的平均）
         """
@@ -580,30 +600,25 @@ def minimax_escape_expectimax(
             value = total / len(moves)
             memo[key] = value
             return value
-    
-    def choose_best(agent, demon) -> Tuple[float, Optional[Coord]]:
-        """选择智能体的最佳移动"""
-        memo: Dict[Tuple[Coord, Coord, int, bool], float] = {}
+
+    def choose_best(agent, demon):
+        memo = {}
         best_val = float('-inf')
-        best_move: Optional[Coord] = None
-        
+        best_move = None
         moves = gw.neighbors4(agent)
         if not moves:
             moves = [agent]
-        
         for nxt in moves:
             if nxt == demon:
                 cand = float(LOSE_SCORE + depth - 1)
             else:
                 cand = expectimax(nxt, demon, depth - 1, False, memo)
-            
-            prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
+            prefer = True if best_move is None else goal_dist.get(nxt, gw.w + gw.h) < goal_dist.get(best_move, gw.w + gw.h)
             if cand > best_val or (cand == best_val and prefer):
                 best_val = cand
                 best_move = nxt
-        
         return best_val, best_move
-    
+
     # 主模拟循环
     for step in range(max_steps):
         if agent_pos == start_goal:
@@ -667,7 +682,7 @@ def minimax_escape(
         max_steps = 1000,
         demon_start = None,
         seed = None,
-) -> MinimaxEscapeResult:
+):
     """
     使用极小极大（Minimax）算法模拟智能体从恶魔追捕中逃生的过程。
 
@@ -734,6 +749,7 @@ def minimax_escape(
         if demon_pos in demon_dist_cache:
             return demon_dist_cache[demon_pos]
         
+        INF = 10**6
         dist = {}
         q = deque([demon_pos])
         dist[demon_pos] = 0
@@ -750,17 +766,7 @@ def minimax_escape(
         return dist
 
     def heuristic(a, d, step):
-        """
-        改进的启发函数：使用BFS距离 + 步数惩罚
-        综合考虑智能体到目标的距离（优先靠近目标）和到恶魔的距离（优先远离恶魔）。
-
-        参数:
-            a - 智能体当前位置
-            d: Optional[Coord] - 恶魔当前位置（None表示无恶魔）
-            step: int - 当前步数
-        返回值:
-            int - 状态评估分数（越高表示状态越优）
-        """
+        """改进的启发式函数：使用BFS距离 + 步数惩罚"""
         if d is None:
             dist_demon = gw.w + gw.h
         else:
@@ -772,15 +778,7 @@ def minimax_escape(
         # 启发式：远离魔鬼 + 靠近目标 - 步数惩罚
         return int(2.0 * dist_demon - 3.0 * dist_goal - 0.1 * step)
 
-    def minimax(
-            agent,
-            demon,
-            remaining: int,
-            maximizing: bool,
-            alpha: float,
-            beta: float,
-            memo: Dict[Tuple[Coord, Coord, int, bool], int],
-    ) -> int:
+    def minimax(agent, demon, remaining, maximizing, alpha, beta, memo):
         """
         极小极大算法实现（带alpha-beta剪枝）：模拟智能体与恶魔的对抗决策过程。
 
@@ -875,38 +873,23 @@ def minimax_escape(
             memo[key] = int(value)
             return memo[key]
 
-    def choose_best(agent, demon) -> Tuple[float, Optional[Coord]]:
-        """
-        选择智能体的最佳移动方向：通过极小极大算法评估所有可能移动，选择评分最高的方向。
-
-        参数:
-            agent - 智能体当前位置
-            demon - 恶魔当前位置
-        返回值:
-            Tuple[int, Optional[Coord]] - (最佳移动的评分, 最佳移动坐标)
-        """
-        memo: Dict[Tuple[Coord, Coord, int, bool], int] = {}  # 局部记忆化缓存
-        best_val = float('-inf')  # 最佳评分（初始负无穷）
-        best_move: Optional[Coord] = None  # 最佳移动坐标
-
-        # 获取智能体的所有可行移动（四方向邻居）
+    def choose_best(agent, demon):
+        memo = {}
+        best_val = float('-inf')
+        best_move = None
         moves = gw.neighbors4(agent)
-        if not moves:  # 无可行移动时原地不动
+        if not moves:
             moves = [agent]
-
-        # 评估每个可能的移动
         for nxt in moves:
-            if nxt == demon:  # 移动后被恶魔捕获，直接计算失败分数
+            if nxt == demon:
                 cand = LOSE_SCORE + depth - 1
-            else:  # 调用极小极大算法评估未来状态（搜索深度-1，轮到恶魔决策）
+            else:
                 cand = minimax(nxt, demon, depth - 1, False, float('-inf'), float('inf'), memo)
-
-            # 评分比较：优先选择评分更高的移动；评分相同时，选择更靠近目标的移动
-            prefer = True if best_move is None else manhattan(nxt, start_goal) < manhattan(best_move, start_goal)
+            # 使用 BFS 步数距离的同分偏好
+            prefer = True if best_move is None else goal_dist.get(nxt, gw.w + gw.h) < goal_dist.get(best_move, gw.w + gw.h)
             if cand > best_val or (cand == best_val and prefer):
                 best_val = cand
                 best_move = nxt
-
         return best_val, best_move
 
     # 主模拟循环
@@ -965,7 +948,6 @@ def minimax_escape(
     final_score = opening_score if opening_score is not None else heuristic(agent_path[-1], demon_pos, len(agent_path))
     return MinimaxEscapeResult(agent_path, demon_path, success, demon_start or gw.demon, caught_step, final_score)
 
-
 # --------- Movement-cost A* with optional gold avoidance (for DP) ---------
 def movement_cost(gw, from_p, to_p):
     """
@@ -1000,7 +982,7 @@ def a_star_movement(gw, start, goal, avoid = None):
     适用于需要考虑地形代价的场景（如动态规划中的子问题路径计算）。
 
     参数:
-        gw: GridWorld - 网格世界环境对象
+        gw: GridWorld - 网格环境对象
         start - 起点坐标
         goal - 目标点坐标
         avoid: Optional[Set[Coord]] - 需要避开的坐标集合（目标点除外），默认为空集
@@ -1016,8 +998,8 @@ def a_star_movement(gw, start, goal, avoid = None):
     gcost: Dict[Coord, int] = {start: 0}
     # parent字典：记录每个节点的父节点，用于路径重构
     parent: Dict[Coord, Optional[Coord]] = {start: None}
-    # 起点入队：初始f值=启发式距离（曼哈顿距离），因初始实际代价为0
-    heapq.heappush(openpq, (manhattan(start, goal), start))
+    goal_map = goal_steps_map(gw, goal)
+    heapq.heappush(openpq, (goal_map.get(start, gw.w + gw.h), start))
 
     # 主搜索循环：当优先队列非空时持续探索
     while openpq:
@@ -1041,7 +1023,7 @@ def a_star_movement(gw, start, goal, avoid = None):
             if nb not in gcost or ng < gcost[nb]:
                 gcost[nb] = ng  # 更新实际代价
                 parent[nb] = cur  # 记录父节点（用于路径重构）
-                f = ng + manhattan(nb, goal)  # 计算f值（实际代价+启发式距离）
+                f = ng + goal_map.get(nb, gw.w + gw.h)  # 计算f值（实际代价+启发式距离）
                 heapq.heappush(openpq, (f, nb))  # 邻居节点入队
 
     # 若队列耗尽仍未到达目标，返回(None, None)表示无路径
@@ -1231,11 +1213,18 @@ def _enumerate_states(gw):
     return states
 
 
-def _apply_action(gw, state, action):
+def _apply_action(gw, state, action, collected_golds=None):
     """
     应用动作并返回下一个状态、奖励和是否结束。
-    注意：此函数用于MDP规划（值迭代/策略迭代/Q学习），
-    不考虑金币的重复收集问题，因此金币不给额外奖励。
+    
+    参数:
+        gw: GridWorld - 网格世界环境
+        state: Coord - 当前状态（位置）
+        action: str - 要执行的动作
+        collected_golds: Optional[Set[Coord]] - 已收集的金币集合（用于避免重复奖励）
+    
+    返回:
+        (下一个状态, 奖励, 是否结束)
     """
     if gw.is_terminal(state):
         return state, 0, True
@@ -1244,14 +1233,23 @@ def _apply_action(gw, state, action):
     if not gw.in_bounds(nxt) or gw.is_wall(nxt):
         return state, gw.wall_penalty, False
     
-    # 奖励函数设置（按照您的要求）
+    # 奖励函数设置
     cell_type = gw.cell_type(nxt)
     if cell_type == 'G':  # 目标（出口）
         reward = 20
     elif cell_type == 'B':  # 陷阱
         reward = -10
-    elif cell_type == '$':  # 金币 ← 修复：应该是'$'不是'G'
-        reward = 20  # 注意：金币设为-1避免循环，否则智能体会在金币周围无限循环
+    elif cell_type == '$':  # 金币
+        # 如果追踪金币收集（rollout阶段），检查是否已收集
+        if collected_golds is not None:
+            if nxt not in collected_golds:
+                reward = 20  # 首次收集：+20
+                collected_golds.add(nxt)  # 标记为已收集
+            else:
+                reward = -1  # 已收集过：按普通通道处理
+        else:
+            # 训练阶段（不追踪金币）：仍给20奖励
+            reward = 2
     elif cell_type == 'S':  # 入口
         reward = -1
     elif cell_type == '#':
@@ -1279,9 +1277,9 @@ def _best_action(
             best_action = action
             best_next = nxt
         elif cand == best_value and best_action is not None:
-            # Tie-breaker: prefer moves closer to goal and avoid standing still
-            cur_dist = manhattan(nxt, gw.goal)
-            best_dist = manhattan(best_next, gw.goal)
+            # 同分时比较到目标的最短步数距离
+            cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+            best_dist = grid_steps_dist(gw, best_next, gw.goal)
             if nxt != state and (best_next == state or cur_dist < best_dist):
                 best_value = cand
                 best_action = action
@@ -1290,15 +1288,57 @@ def _best_action(
 
 
 def _rollout_policy(gw, policy, max_steps = 200):
+    """
+    执行策略生成路径，追踪已收集的金币以避免无限循环。
+    
+    参数:
+        gw: GridWorld - 网格世界环境
+        policy: Dict[Coord, str] - 策略字典
+        max_steps: int - 最大步数
+    
+    返回:
+        List[Coord] - 生成的路径
+    """
     state = gw.start
     path: List[Coord] = [state]
+    collected_golds: Set[Coord] = set()  # 追踪已收集的金币
     visited_count: Dict[Coord, int] = {state: 1}
     
     for _ in range(max_steps):
         action = policy.get(state)
         if action is None:
             break
-        nxt, _, done = _apply_action(gw, state, action)
+
+        # 首先按策略动作前进
+        nxt, _, done = _apply_action(gw, state, action, collected_golds)
+
+        # 如出现回退或在某格子访问次数过多，尝试改用更接近终点的备选动作
+        need_escape = False
+        if len(path) >= 2 and nxt == path[-2]:
+            need_escape = True
+        if visited_count.get(nxt, 0) >= 2:
+            need_escape = True
+
+        if need_escape:
+            best_alt = None
+            best_alt_dist = None
+            for a in ACTION_ORDER:
+                if a == action:
+                    continue
+                dx, dy = ACTIONS[a]
+                cand = (state[0] + dx, state[1] + dy)
+                if not gw.in_bounds(cand) or gw.is_wall(cand):
+                    continue
+                if visited_count.get(cand, 0) >= 2:
+                    continue
+                d = grid_steps_dist(gw, cand, gw.goal)
+                if best_alt is None or d < best_alt_dist:
+                    best_alt = a
+                    best_alt_dist = d
+            if best_alt is not None:
+                # 使用备选动作重新计算下一步
+                nxt, _, done = _apply_action(gw, state, best_alt, collected_golds)
+
         path.append(nxt)
         state = nxt
         
@@ -1306,10 +1346,8 @@ def _rollout_policy(gw, policy, max_steps = 200):
         if done:
             break
         
-        # 检测循环：如果访问某个位置超过3次，说明陷入循环
+        # 更新访问计数，用于抑制小圈来回
         visited_count[nxt] = visited_count.get(nxt, 0) + 1
-        if visited_count[nxt] > 3:
-            break
     
     return path
 
@@ -1319,27 +1357,54 @@ def value_iteration_plan(
     gamma = 0.9,
     theta = 1e-4,
     max_iterations = 1000,
-) -> ValueIterationResult:
+):
     states = _enumerate_states(gw)
-    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    values = {s: 0.0 for s in states}
     converged = False
     iterations = 0
     for iterations in range(1, max_iterations + 1):
         delta = 0.0
+        new_values = values.copy()
         for state in states:
             if gw.is_terminal(state):
-                values[state] = 0.0
+                new_values[state] = 0.0
                 continue
-            _, best_value = _best_action(gw, state, values, gamma)
-            delta = max(delta, abs(best_value - values[state]))
-            values[state] = best_value
+            # 贝尔曼最优方程：V(s) = max_a [ R(s,a) + γ * V(s') ]
+            best_v = float('-inf')
+            for action in ACTION_ORDER:
+                nxt, reward, done = _apply_action(gw, state, action)
+                val = reward + (0.0 if done else gamma * values[nxt])
+                if val > best_v:
+                    best_v = val
+            if best_v == float('-inf'):
+                best_v = 0.0
+            new_values[state] = best_v
+            delta = max(delta, abs(new_values[state] - values[state]))
+        values = new_values
         if delta < theta:
             converged = True
             break
-    policy: Dict[Coord, Optional[str]] = {}
+    policy = {}
     for state in states:
-        action, _ = _best_action(gw, state, values, gamma)
-        policy[state] = action
+        if gw.is_terminal(state):
+            policy[state] = None
+            continue
+        # 政策由贝尔曼最优选择决定
+        best_action = None
+        best_v = float('-inf')
+        for action in ACTION_ORDER:
+            nxt, reward, done = _apply_action(gw, state, action)
+            val = reward + (0.0 if done else gamma * values[nxt])
+            if val > best_v:
+                best_v = val
+                best_action = action
+            elif val == best_v and best_action is not None:
+                # 同分时选更靠近目标（最短步数距离更小）的动作
+                cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+                best_dist = grid_steps_dist(gw, _apply_action(gw, state, best_action)[0], gw.goal)
+                if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                    best_action = action
+        policy[state] = best_action
     path = _rollout_policy(gw, policy)
     return ValueIterationResult(values, policy, path, iterations, converged)
 
@@ -1349,37 +1414,49 @@ def policy_iteration_plan(
     gamma = 0.9,
     theta = 1e-4,
     max_policy_iterations = 100,
-) -> PolicyIterationResult:
+):
     states = _enumerate_states(gw)
-    policy: Dict[Coord, Optional[str]] = {}
+    policy = {}
     for state in states:
         policy[state] = None if gw.is_terminal(state) else ACTION_ORDER[0]
-    values: Dict[Coord, float] = {s: 0.0 for s in states}
+    values = {s: 0.0 for s in states}
     policy_iters = 0
     evaluation_iters_total = 0
     for policy_iters in range(1, max_policy_iterations + 1):
-        # Policy evaluation
+        # Policy evaluation (迭代求解 V(s) = R(s,pi(s)) + γ V(s') )
         while True:
             delta = 0.0
             evaluation_iters_total += 1
             for state in states:
                 if gw.is_terminal(state) or policy[state] is None:
-                    values[state] = 0.0
-                    continue
-                nxt, reward, done = _apply_action(gw, state, policy[state])
-                new_val = reward + (0.0 if done else gamma * values[nxt])
+                    new_val = 0.0
+                else:
+                    nxt, reward, done = _apply_action(gw, state, policy[state])
+                    new_val = reward + (0.0 if done else gamma * values[nxt])
                 delta = max(delta, abs(new_val - values[state]))
                 values[state] = new_val
             if delta < theta:
                 break
-        # Policy improvement
+        # Policy improvement (贝尔曼最优式)
         policy_stable = True
         for state in states:
             if gw.is_terminal(state):
                 policy[state] = None
                 continue
             old_action = policy[state]
-            best_action, _ = _best_action(gw, state, values, gamma)
+            best_action = None
+            best_v = float('-inf')
+            for action in ACTION_ORDER:
+                nxt, reward, done = _apply_action(gw, state, action)
+                val = reward + (0.0 if done else gamma * values[nxt])
+                if val > best_v:
+                    best_v = val
+                    best_action = action
+                elif val == best_v and best_action is not None:
+                    cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+                    best_dist = grid_steps_dist(gw, _apply_action(gw, state, best_action)[0], gw.goal)
+                    if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                        best_action = action
             policy[state] = best_action
             if old_action != best_action:
                 policy_stable = False
@@ -1415,7 +1492,7 @@ def q_learning_plan(
             else:
                 action = max(
                     ACTION_ORDER,
-                    key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+                    key=lambda a: (q_values[(state, a)], -grid_steps_dist(gw, _apply_action(gw, state, a)[0], gw.goal))
                 )
             nxt, reward, done = _apply_action(gw, state, action)
             best_next = 0.0
@@ -1436,9 +1513,8 @@ def q_learning_plan(
         else:
             best_action = max(
                 ACTION_ORDER,
-                key=lambda a: (q_values[(state, a)], -manhattan(_apply_action(gw, state, a)[0], gw.goal))
+                key=lambda a: (q_values[(state, a)], -grid_steps_dist(gw, _apply_action(gw, state, a)[0], gw.goal))
             )
             policy[state] = best_action
     path = _rollout_policy(gw, policy)
     return QLearningResult(dict(q_values), policy, path, episode_rewards, episodes)
-
