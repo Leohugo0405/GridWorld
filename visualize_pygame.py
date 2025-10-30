@@ -420,27 +420,23 @@ def main():
     global globals_tiles
     globals_tiles = load_tile_images(CELL)
 
-    # 预计算
-    steps_dfs    = list(dfs_search_steps(gw, gw.start, gw.goal))
-    steps_greedy = list(greedy_search_steps(gw, gw.start, gw.goal))
-    steps_astar  = list(astar_search_steps(gw, gw.start, gw.goal))
-    res2 = best_collect_all_golds_dp(gw)
-    p_collect = res2.path
-    
-    # 预计算值迭代、策略迭代和Q学习
-    value_iter_result = value_iteration_plan(gw, gamma=0.9, theta=1e-4, max_iterations=1000)
-    policy_iter_result = policy_iteration_plan(gw, gamma=0.9, theta=1e-4, max_policy_iterations=100)
-    qlearning_result = q_learning_plan(gw, episodes=500, gamma=0.9, alpha=0.1, epsilon=0.1, seed=42)
+    # 延迟计算：初始不计算任何结果，动画器以空数据初始化
+    steps_dfs = None
+    steps_greedy = None
+    steps_astar = None
+    res2 = None
+    p_collect = None
+    value_iter_result = None
+    policy_iter_result = None
+    qlearning_result = None
 
-    # 动画器：Collect-All 使用 AgentPathAnim
-    anim_part2  = AgentPathAnim(gw, p_collect, step_ms=160)
-    anim_search = SearchAnimator(steps_dfs, step_ms=120)
+    # 动画器：以占位数据初始化，等“开始”时再计算并更新
+    anim_part2  = AgentPathAnim(gw, [], step_ms=160)
+    anim_search = SearchAnimator([], step_ms=120)
     anim_minimax = MinimaxAnimator(gw, None, step_ms=200)
-    
-    # 动画器：值迭代、策略迭代、Q学习
-    anim_value_iter = PolicyPathAnim(gw, value_iter_result, color=COL_VALUE_ITER, step_ms=160)
-    anim_policy_iter = PolicyPathAnim(gw, policy_iter_result, color=COL_POLICY_ITER, step_ms=160)
-    anim_qlearning = PolicyPathAnim(gw, qlearning_result, color=COL_QLEARNING, step_ms=160)
+    anim_value_iter = PolicyPathAnim(gw, None, color=COL_VALUE_ITER, step_ms=160)
+    anim_policy_iter = PolicyPathAnim(gw, None, color=COL_POLICY_ITER, step_ms=160)
+    anim_qlearning = PolicyPathAnim(gw, None, color=COL_QLEARNING, step_ms=160)
 
     rng = random.Random()
     minimax_result: Optional[MinimaxEscapeResult] = None
@@ -454,6 +450,89 @@ def main():
         anim_minimax.set_result(minimax_result)
 
     # 仅在进入 Part3（Minimax）时才生成魔鬼并计算结果
+
+    # 刷新地图与相关缓存：每次切换模式时调用，恢复金矿等初始状态
+    def refresh_world():
+        nonlocal gw, steps_dfs, steps_greedy, steps_astar, res2, p_collect
+        nonlocal value_iter_result, policy_iter_result, qlearning_result
+        nonlocal anim_part2, anim_search, anim_minimax, anim_value_iter, anim_policy_iter, anim_qlearning
+        nonlocal minimax_result
+
+        # 重新加载地图，恢复为文件初始状态
+        gw = GridWorld.from_json()
+
+        # 清空所有缓存结果，动画器重新以空数据初始化
+        steps_dfs = None
+        steps_greedy = None
+        steps_astar = None
+        res2 = None
+        p_collect = None
+        value_iter_result = None
+        policy_iter_result = None
+        qlearning_result = None
+        minimax_result = None
+
+        anim_part2  = AgentPathAnim(gw, [], step_ms=160)
+        anim_search = SearchAnimator([], step_ms=120)
+        anim_minimax = MinimaxAnimator(gw, None, step_ms=200)
+        anim_value_iter = PolicyPathAnim(gw, None, color=COL_VALUE_ITER, step_ms=160)
+        anim_policy_iter = PolicyPathAnim(gw, None, color=COL_POLICY_ITER, step_ms=160)
+        anim_qlearning = PolicyPathAnim(gw, None, color=COL_QLEARNING, step_ms=160)
+
+        # 默认不显示魔鬼，除非后续进入 Part3 时再生成
+        gw.demon = None
+    # 确保当前模式所需的数据已准备：在开始播放时调用
+    def ensure_mode_ready():
+        nonlocal steps_dfs, steps_greedy, steps_astar, res2, p_collect
+        nonlocal value_iter_result, policy_iter_result, qlearning_result
+        nonlocal anim_part2, anim_search, anim_minimax, anim_value_iter, anim_policy_iter, anim_qlearning
+
+        if MODE == MODE_COLLECT:
+            if p_collect is None:
+                res = best_collect_all_golds_dp(gw)
+                res2 = res
+                pth = res.path
+                p_collect = pth
+                anim_part2 = AgentPathAnim(gw, p_collect, step_ms=160)
+                anim_part2.reset()
+        elif MODE == MODE_SEARCH:
+            # 确保有算法名
+            algo = anim_search.algo if getattr(anim_search, 'algo', '') else "DFS"
+            if algo.upper() == "DFS":
+                if steps_dfs is None:
+                    steps_dfs = list(dfs_search_steps(gw, gw.start, gw.goal))
+                anim_search.steps = steps_dfs
+                anim_search.algo = "DFS"
+            elif algo.lower() == "greedy" or algo == "Greedy":
+                if steps_greedy is None:
+                    steps_greedy = list(greedy_search_steps(gw, gw.start, gw.goal))
+                anim_search.steps = steps_greedy
+                anim_search.algo = "Greedy"
+            else:
+                if steps_astar is None:
+                    steps_astar = list(astar_search_steps(gw, gw.start, gw.goal))
+                anim_search.steps = steps_astar
+                anim_search.algo = "A*"
+            anim_search.reset()
+        elif MODE == MODE_MINIMAX:
+            # 进入 Part3 时才生成魔鬼并计算
+            recompute_minimax()
+            anim_minimax.reset()
+        elif MODE == MODE_VALUE_ITER:
+            if value_iter_result is None:
+                value_iter_result = value_iteration_plan(gw, gamma=0.9, theta=1e-4, max_iterations=1000)
+            anim_value_iter.set_result(value_iter_result)
+            anim_value_iter.reset()
+        elif MODE == MODE_POLICY_ITER:
+            if policy_iter_result is None:
+                policy_iter_result = policy_iteration_plan(gw, gamma=0.9, theta=1e-4, max_policy_iterations=100)
+            anim_policy_iter.set_result(policy_iter_result)
+            anim_policy_iter.reset()
+        elif MODE == MODE_QLEARNING:
+            if qlearning_result is None:
+                qlearning_result = q_learning_plan(gw, episodes=500, gamma=0.9, alpha=0.1, epsilon=0.1, seed=42)
+            anim_qlearning.set_result(qlearning_result)
+            anim_qlearning.reset()
 
     # 模式/播放
     MODE_SEARCH = 4
@@ -535,41 +614,29 @@ def main():
     def set_mode(m):
         nonlocal MODE
         MODE = m
-        if MODE == MODE_MINIMAX:
-            # 进入 Part3：随机化魔鬼并计算路径
-            recompute_minimax()
-            anim_minimax.reset()
-        else:
-            # 离开 Part3：移除魔鬼
+        # 刷新地图，避免 Part2 修改导致金矿缺失
+        refresh_world()
+        # 切换模式时不做任何重计算；仅确保魔鬼在非 Part3 下被隐藏
+        if MODE != MODE_MINIMAX:
             gw.demon = None
             anim_minimax.set_result(None)
-            if MODE == MODE_VALUE_ITER:
-                anim_value_iter.reset()
-            elif MODE == MODE_POLICY_ITER:
-                anim_policy_iter.reset()
-            elif MODE == MODE_QLEARNING:
-                anim_qlearning.reset()
         apply_play_state()
 
     def set_algo(name):
         nonlocal MODE
-        if name != "minimax":
-            # 选择非 Part3 算法时，移除魔鬼
-            gw.demon = None
-            anim_minimax.set_result(None)
+        # 选择非 Part3 算法时，移除魔鬼
+        gw.demon = None
+        anim_minimax.set_result(None)
         if name == "dfs":
             MODE = MODE_SEARCH
-            anim_search.steps = steps_dfs
             anim_search.algo = "DFS"
             anim_search.reset()
         elif name == "greedy":
             MODE = MODE_SEARCH
-            anim_search.steps = steps_greedy
             anim_search.algo = "Greedy"
             anim_search.reset()
         elif name == "astar":
             MODE = MODE_SEARCH
-            anim_search.steps = steps_astar
             anim_search.algo = "A*"
             anim_search.reset()
         elif name == "collect":
@@ -577,7 +644,6 @@ def main():
             anim_part2.reset()
         elif name == "minimax":
             MODE = MODE_MINIMAX
-            recompute_minimax()
             anim_minimax.reset()
         elif name == "value_iter":
             MODE = MODE_VALUE_ITER
@@ -591,21 +657,15 @@ def main():
         apply_play_state()
 
     def on_play_pause():
+        nonlocal is_playing
+        # 若即将开始播放，先确保当前模式数据已就绪
+        if not is_playing:
+            ensure_mode_ready()
         set_playing(not is_playing)
 
     def on_restart():
-        anim_part2.reset()
-        anim_search.reset()
-        if MODE == MODE_MINIMAX:
-            recompute_minimax()
-            anim_minimax.reset()
-        else:
-            gw.demon = None
-            anim_minimax.set_result(None)
-            anim_minimax.reset()
-        anim_value_iter.reset()
-        anim_policy_iter.reset()
-        anim_qlearning.reset()
+        # 重新加载地图并清空缓存，等待“开始”时再按需计算
+        refresh_world()
         apply_play_state()
 
     def on_speed(delta):
@@ -678,24 +738,33 @@ def main():
         
         # 构建信息字符串
         if MODE == MODE_VALUE_ITER:
-            info = (
-                f"Value Iteration: path_len={len(value_iter_result.path)} "
-                f"iterations={value_iter_result.iterations} "
-                f"converged={value_iter_result.converged}"
-            )
+            if value_iter_result:
+                info = (
+                    f"Value Iteration: path_len={len(value_iter_result.path)} "
+                    f"iterations={value_iter_result.iterations} "
+                    f"converged={value_iter_result.converged}"
+                )
+            else:
+                info = "Value Iteration: N/A (press Start)"
         elif MODE == MODE_POLICY_ITER:
-            info = (
-                f"Policy Iteration: path_len={len(policy_iter_result.path)} "
-                f"policy_iters={policy_iter_result.policy_iterations} "
-                f"eval_iters={policy_iter_result.evaluation_iterations}"
-            )
+            if policy_iter_result:
+                info = (
+                    f"Policy Iteration: path_len={len(policy_iter_result.path)} "
+                    f"policy_iters={policy_iter_result.policy_iterations} "
+                    f"eval_iters={policy_iter_result.evaluation_iterations}"
+                )
+            else:
+                info = "Policy Iteration: N/A (press Start)"
         elif MODE == MODE_QLEARNING:
-            avg_reward = sum(qlearning_result.episode_rewards[-100:]) / min(100, len(qlearning_result.episode_rewards)) if qlearning_result.episode_rewards else 0
-            info = (
-                f"Q-Learning: path_len={len(qlearning_result.path)} "
-                f"episodes={qlearning_result.episodes} "
-                f"avg_reward(last100)={avg_reward:.1f}"
-            )
+            if qlearning_result:
+                avg_reward = sum(qlearning_result.episode_rewards[-100:]) / min(100, len(qlearning_result.episode_rewards)) if qlearning_result.episode_rewards else 0
+                info = (
+                    f"Q-Learning: path_len={len(qlearning_result.path)} "
+                    f"episodes={qlearning_result.episodes} "
+                    f"avg_reward(last100)={avg_reward:.1f}"
+                )
+            else:
+                info = "Q-Learning: N/A (press Start)"
         else:
             info = (
                 f"Start {gw.start}  Goal {gw.goal} | Part2 length={len(p_collect) if p_collect else 'N/A'}"
