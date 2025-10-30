@@ -1249,7 +1249,7 @@ def _apply_action(gw, state, action, collected_golds=None):
                 reward = -1  # 已收集过：按普通通道处理
         else:
             # 训练阶段（不追踪金币）：仍给20奖励
-            reward = 2
+            reward = 20
     elif cell_type == 'S':  # 入口
         reward = -1
     elif cell_type == '#':
@@ -1277,13 +1277,20 @@ def _best_action(
             best_action = action
             best_next = nxt
         elif cand == best_value and best_action is not None:
-            # 同分时比较到目标的最短步数距离
-            cur_dist = grid_steps_dist(gw, nxt, gw.goal)
-            best_dist = grid_steps_dist(gw, best_next, gw.goal)
-            if nxt != state and (best_next == state or cur_dist < best_dist):
+            # 同分时优先不走陷阱，其次比较到目标的最短步数距离
+            t_cur = gw.cell_type(nxt)
+            t_best = gw.cell_type(best_next)
+            if t_best == 'B' and t_cur != 'B':
                 best_value = cand
                 best_action = action
                 best_next = nxt
+            else:
+                cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+                best_dist = grid_steps_dist(gw, best_next, gw.goal)
+                if nxt != state and (best_next == state or cur_dist < best_dist):
+                    best_value = cand
+                    best_action = action
+                    best_next = nxt
     return best_action, best_value if best_value != float('-inf') else 0.0
 
 
@@ -1312,11 +1319,13 @@ def _rollout_policy(gw, policy, max_steps = 200):
         # 首先按策略动作前进
         nxt, _, done = _apply_action(gw, state, action, collected_golds)
 
-        # 如出现回退或在某格子访问次数过多，尝试改用更接近终点的备选动作
+        # 如出现回退、在某格子访问次数过多，或下一步是陷阱，尝试改用更接近终点的备选动作
         need_escape = False
         if len(path) >= 2 and nxt == path[-2]:
             need_escape = True
         if visited_count.get(nxt, 0) >= 2:
+            need_escape = True
+        if gw.cell_type(nxt) == 'B':
             need_escape = True
 
         if need_escape:
@@ -1330,6 +1339,9 @@ def _rollout_policy(gw, policy, max_steps = 200):
                 if not gw.in_bounds(cand) or gw.is_wall(cand):
                     continue
                 if visited_count.get(cand, 0) >= 2:
+                    continue
+                # 避开陷阱作为备选
+                if gw.cell_type(cand) == 'B':
                     continue
                 d = grid_steps_dist(gw, cand, gw.goal)
                 if best_alt is None or d < best_alt_dist:
@@ -1399,11 +1411,17 @@ def value_iteration_plan(
                 best_v = val
                 best_action = action
             elif val == best_v and best_action is not None:
-                # 同分时选更靠近目标（最短步数距离更小）的动作
-                cur_dist = grid_steps_dist(gw, nxt, gw.goal)
-                best_dist = grid_steps_dist(gw, _apply_action(gw, state, best_action)[0], gw.goal)
-                if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                # 同分时优先不走陷阱，其次选更靠近目标的动作
+                t_cur = gw.cell_type(nxt)
+                best_next_state = _apply_action(gw, state, best_action)[0]
+                t_best = gw.cell_type(best_next_state)
+                if t_best == 'B' and t_cur != 'B':
                     best_action = action
+                else:
+                    cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+                    best_dist = grid_steps_dist(gw, best_next_state, gw.goal)
+                    if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                        best_action = action
         policy[state] = best_action
     path = _rollout_policy(gw, policy)
     return ValueIterationResult(values, policy, path, iterations, converged)
@@ -1453,10 +1471,17 @@ def policy_iteration_plan(
                     best_v = val
                     best_action = action
                 elif val == best_v and best_action is not None:
-                    cur_dist = grid_steps_dist(gw, nxt, gw.goal)
-                    best_dist = grid_steps_dist(gw, _apply_action(gw, state, best_action)[0], gw.goal)
-                    if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                    # 同分时优先不走陷阱，其次选更靠近目标的动作
+                    t_cur = gw.cell_type(nxt)
+                    best_next_state = _apply_action(gw, state, best_action)[0]
+                    t_best = gw.cell_type(best_next_state)
+                    if t_best == 'B' and t_cur != 'B':
                         best_action = action
+                    else:
+                        cur_dist = grid_steps_dist(gw, nxt, gw.goal)
+                        best_dist = grid_steps_dist(gw, best_next_state, gw.goal)
+                        if nxt != state and (best_dist == 0 or cur_dist < best_dist):
+                            best_action = action
             policy[state] = best_action
             if old_action != best_action:
                 policy_stable = False
