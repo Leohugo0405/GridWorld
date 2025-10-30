@@ -79,6 +79,53 @@ def grid_steps_dist(gw, a, b):
     return dist_map.get(a, gw.w + gw.h)
 
 
+# ------------------ MDP transition model (stochastic) ------------------
+def _turn_left(action: str) -> str:
+    if action == 'R':
+        return 'U'
+    if action == 'U':
+        return 'L'
+    if action == 'L':
+        return 'D'
+    return 'R'  # action == 'D'
+
+
+def _turn_right(action: str) -> str:
+    if action == 'R':
+        return 'D'
+    if action == 'D':
+        return 'L'
+    if action == 'L':
+        return 'U'
+    return 'R'  # action == 'U'
+
+
+def _transition_distribution(
+    gw: GridWorld,
+    state: Coord,
+    action: str,
+    p_intended: float = 1,
+    p_slip: float = 0,
+):
+    """
+    返回在状态 state 执行动作 action 的状态转移分布列表：
+    [(p, next_state, reward, done), ...]
+
+    采用经典 GridWorld 随机性：
+    - 以 p_intended 执行期望方向
+    - 以 p_slip 分别朝“左偏/右偏”方向滑动
+    碰墙或越界按照 _apply_action 的墙惩罚和原地不动处理。
+    """
+    if gw.is_terminal(state):
+        return [(1.0, state, 0.0, True)]
+    left = _turn_left(action)
+    right = _turn_right(action)
+    outcomes = []
+    for prob, a in ((p_intended, action), (p_slip, left), (p_slip, right)):
+        nxt, reward, done = _apply_action(gw, state, a)
+        outcomes.append((prob, nxt, reward, done))
+    return outcomes
+
 # ------------------ Part 1: Step-by-step search generators ------------------
 @dataclass
 class SearchStep:
@@ -1240,15 +1287,15 @@ def _apply_action(gw, state, action, collected_golds=None):
     elif cell_type == 'B':  # 陷阱
         reward = -10
     elif cell_type == '$':  # 金币
-        # 如果追踪金币收集（rollout阶段），检查是否已收集
-        if collected_golds is not None:
-            if nxt not in collected_golds:
-                reward = 20  # 首次收集：+20
-                collected_golds.add(nxt)  # 标记为已收集
-            else:
-                reward = -1  # 已收集过：按普通通道处理
-        else:
-            # 训练阶段（不追踪金币）：仍给20奖励
+        # # 如果追踪金币收集（rollout阶段），检查是否已收集
+        # if collected_golds is not None:
+        #     if nxt not in collected_golds:
+        #         reward = 20  # 首次收集：+20
+        #         collected_golds.add(nxt)  # 标记为已收集
+        #     else:
+        #         reward = -1  # 已收集过：按普通通道处理
+        # else:
+        #     # 训练阶段（不追踪金币）：仍给20奖励
             reward = 20
     elif cell_type == 'S':  # 入口
         reward = -1
@@ -1381,13 +1428,14 @@ def value_iteration_plan(
             if gw.is_terminal(state):
                 new_values[state] = 0.0
                 continue
-            # 贝尔曼最优方程：V(s) = max_a [ R(s,a) + γ * V(s') ]
+            # 随机转移：V(s) = max_a E[ R + γ V(s') ]
             best_v = float('-inf')
             for action in ACTION_ORDER:
-                nxt, reward, done = _apply_action(gw, state, action)
-                val = reward + (0.0 if done else gamma * values[nxt])
-                if val > best_v:
-                    best_v = val
+                expected_v = 0.0
+                for p, nxt, reward, done in _transition_distribution(gw, state, action):
+                    expected_v += p * (reward + (0.0 if done else gamma * values[nxt]))
+                if expected_v > best_v:
+                    best_v = expected_v
             if best_v == float('-inf'):
                 best_v = 0.0
             new_values[state] = best_v
@@ -1401,27 +1449,16 @@ def value_iteration_plan(
         if gw.is_terminal(state):
             policy[state] = None
             continue
-        # 政策由贝尔曼最优选择决定
+        # 随机环境下按期望回报选最优动作
         best_action = None
         best_v = float('-inf')
         for action in ACTION_ORDER:
-            nxt, reward, done = _apply_action(gw, state, action)
-            val = reward + (0.0 if done else gamma * values[nxt])
-            if val > best_v:
-                best_v = val
+            expected_v = 0.0
+            for p, nxt, reward, done in _transition_distribution(gw, state, action):
+                expected_v += p * (reward + (0.0 if done else gamma * values[nxt]))
+            if expected_v > best_v:
+                best_v = expected_v
                 best_action = action
-            elif val == best_v and best_action is not None:
-                # 同分时优先不走陷阱，其次选更靠近目标的动作
-                t_cur = gw.cell_type(nxt)
-                best_next_state = _apply_action(gw, state, best_action)[0]
-                t_best = gw.cell_type(best_next_state)
-                if t_best == 'B' and t_cur != 'B':
-                    best_action = action
-                else:
-                    cur_dist = grid_steps_dist(gw, nxt, gw.goal)
-                    best_dist = grid_steps_dist(gw, best_next_state, gw.goal)
-                    if nxt != state and (best_dist == 0 or cur_dist < best_dist):
-                        best_action = action
         policy[state] = best_action
     path = _rollout_policy(gw, policy)
     return ValueIterationResult(values, policy, path, iterations, converged)
@@ -1441,7 +1478,8 @@ def policy_iteration_plan(
     policy_iters = 0
     evaluation_iters_total = 0
     for policy_iters in range(1, max_policy_iterations + 1):
-        # Policy evaluation (迭代求解 V(s) = R(s,pi(s)) + γ V(s') )
+        # Policy evaluation with stochastic transitions:
+        # V(s) = E_{s'|s,pi(s)} [ R + γ V(s') ]
         while True:
             delta = 0.0
             evaluation_iters_total += 1
@@ -1449,13 +1487,15 @@ def policy_iteration_plan(
                 if gw.is_terminal(state) or policy[state] is None:
                     new_val = 0.0
                 else:
-                    nxt, reward, done = _apply_action(gw, state, policy[state])
-                    new_val = reward + (0.0 if done else gamma * values[nxt])
+                    expected_v = 0.0
+                    for p, nxt, reward, done in _transition_distribution(gw, state, policy[state]):
+                        expected_v += p * (reward + (0.0 if done else gamma * values[nxt]))
+                    new_val = expected_v
                 delta = max(delta, abs(new_val - values[state]))
                 values[state] = new_val
             if delta < theta:
                 break
-        # Policy improvement (贝尔曼最优式)
+        # Policy improvement (stochastic):
         policy_stable = True
         for state in states:
             if gw.is_terminal(state):
@@ -1465,23 +1505,12 @@ def policy_iteration_plan(
             best_action = None
             best_v = float('-inf')
             for action in ACTION_ORDER:
-                nxt, reward, done = _apply_action(gw, state, action)
-                val = reward + (0.0 if done else gamma * values[nxt])
-                if val > best_v:
-                    best_v = val
+                expected_v = 0.0
+                for p, nxt, reward, done in _transition_distribution(gw, state, action):
+                    expected_v += p * (reward + (0.0 if done else gamma * values[nxt]))
+                if expected_v > best_v:
+                    best_v = expected_v
                     best_action = action
-                elif val == best_v and best_action is not None:
-                    # 同分时优先不走陷阱，其次选更靠近目标的动作
-                    t_cur = gw.cell_type(nxt)
-                    best_next_state = _apply_action(gw, state, best_action)[0]
-                    t_best = gw.cell_type(best_next_state)
-                    if t_best == 'B' and t_cur != 'B':
-                        best_action = action
-                    else:
-                        cur_dist = grid_steps_dist(gw, nxt, gw.goal)
-                        best_dist = grid_steps_dist(gw, best_next_state, gw.goal)
-                        if nxt != state and (best_dist == 0 or cur_dist < best_dist):
-                            best_action = action
             policy[state] = best_action
             if old_action != best_action:
                 policy_stable = False
@@ -1519,7 +1548,16 @@ def q_learning_plan(
                     ACTION_ORDER,
                     key=lambda a: (q_values[(state, a)], -grid_steps_dist(gw, _apply_action(gw, state, a)[0], gw.goal))
                 )
-            nxt, reward, done = _apply_action(gw, state, action)
+            # 采样随机转移
+            dist = _transition_distribution(gw, state, action)
+            r = rng.random()
+            acc = 0.0
+            nxt = state; reward = 0.0; done = False
+            for p, ns, rew, dn in dist:
+                acc += p
+                if r <= acc:
+                    nxt, reward, done = ns, rew, dn
+                    break
             best_next = 0.0
             if not done:
                 best_next = max(q_values[(nxt, a)] for a in ACTION_ORDER)
