@@ -104,8 +104,8 @@ def _transition_distribution(
     gw: GridWorld,
     state: Coord,
     action: str,
-    p_intended: float = 1,
-    p_slip: float = 0,
+    p_intended: float = 0.8,
+    p_slip: float = 0.1,
 ):
     """
     返回在状态 state 执行动作 action 的状态转移分布列表：
@@ -1287,16 +1287,7 @@ def _apply_action(gw, state, action, collected_golds=None):
     elif cell_type == 'B':  # 陷阱
         reward = -10
     elif cell_type == '$':  # 金币
-        # # 如果追踪金币收集（rollout阶段），检查是否已收集
-        # if collected_golds is not None:
-        #     if nxt not in collected_golds:
-        #         reward = 20  # 首次收集：+20
-        #         collected_golds.add(nxt)  # 标记为已收集
-        #     else:
-        #         reward = -1  # 已收集过：按普通通道处理
-        # else:
-        #     # 训练阶段（不追踪金币）：仍给20奖励
-            reward = 20
+        reward = 20
     elif cell_type == 'S':  # 入口
         reward = -1
     elif cell_type == '#':
