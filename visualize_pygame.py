@@ -453,7 +453,7 @@ def main():
         minimax_result = minimax_escape_expectimax(gw, depth=15, max_steps=1000, demon_start=gw.demon, seed=seed)
         anim_minimax.set_result(minimax_result)
 
-    recompute_minimax()
+    # 仅在进入 Part3（Minimax）时才生成魔鬼并计算结果
 
     # 模式/播放
     MODE_SEARCH = 4
@@ -536,17 +536,27 @@ def main():
         nonlocal MODE
         MODE = m
         if MODE == MODE_MINIMAX:
+            # 进入 Part3：随机化魔鬼并计算路径
+            recompute_minimax()
             anim_minimax.reset()
-        elif MODE == MODE_VALUE_ITER:
-            anim_value_iter.reset()
-        elif MODE == MODE_POLICY_ITER:
-            anim_policy_iter.reset()
-        elif MODE == MODE_QLEARNING:
-            anim_qlearning.reset()
+        else:
+            # 离开 Part3：移除魔鬼
+            gw.demon = None
+            anim_minimax.set_result(None)
+            if MODE == MODE_VALUE_ITER:
+                anim_value_iter.reset()
+            elif MODE == MODE_POLICY_ITER:
+                anim_policy_iter.reset()
+            elif MODE == MODE_QLEARNING:
+                anim_qlearning.reset()
         apply_play_state()
 
     def set_algo(name):
         nonlocal MODE
+        if name != "minimax":
+            # 选择非 Part3 算法时，移除魔鬼
+            gw.demon = None
+            anim_minimax.set_result(None)
         if name == "dfs":
             MODE = MODE_SEARCH
             anim_search.steps = steps_dfs
@@ -586,8 +596,13 @@ def main():
     def on_restart():
         anim_part2.reset()
         anim_search.reset()
-        recompute_minimax()
-        anim_minimax.reset()
+        if MODE == MODE_MINIMAX:
+            recompute_minimax()
+            anim_minimax.reset()
+        else:
+            gw.demon = None
+            anim_minimax.set_result(None)
+            anim_minimax.reset()
         anim_value_iter.reset()
         anim_policy_iter.reset()
         anim_qlearning.reset()
